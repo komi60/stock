@@ -1,0 +1,22 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Users/komi/Desktop/Stock/**/*.py /c/Users/komi/Desktop/Stock/main.py /c/Users/komi/Desktop/Stock/core/*.py /c/Users/komi/Desktop/Stock/modules/**/*.py /c/Users/komi/Desktop/Stock/broker/*.py /c/Users/komi/Desktop/Stock/ai/*.py)",
+      "Bash(python -c \"import sys; print\\(sys.version\\)\")",
+      "Bash(pip install pydantic pyyaml python-dotenv loguru apscheduler httpx aiohttp beautifulsoup4 feedparser fastapi uvicorn aiosqlite aiosmtplib pandas numpy orjson pytz)",
+      "Bash(python tests/test_system.py)",
+      "Bash(python -c \":*)",
+      "Bash(pip install cryptography)",
+      "Bash(python run_dashboard.py)",
+      "Bash(timeout 5)",
+      "Bash(ping -n 4 127.0.0.)",
+      "Bash(python test_collect.py)",
+      "Bash(python -X utf8 -c \":*)",
+      "Bash(curl -s http://127.0.0.1:8080/api/news)",
+      "Bash(python -X utf8 -m json.tool --no-ensure-ascii)",
+      "Bash(pip install google-generativeai --quiet)",
+      "Bash(pip install google-genai --quiet)",
+      "Bash(python test_ai_analysis.py)"
+    ]
+  }
+}

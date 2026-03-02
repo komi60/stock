@@ -1,0 +1,42 @@
+# Core
+pydantic>=2.0
+pyyaml>=6.0
+python-dotenv>=1.0
+loguru>=0.7
+
+# Scheduling
+apscheduler>=3.10
+
+# Broker API & HTTP
+httpx>=0.27
+websockets>=12.0
+
+# AI
+google-generativeai>=0.8
+anthropic>=0.40
+
+# Technical Analysis
+pandas>=2.0
+numpy>=1.24
+pandas-ta>=0.3
+ta-lib>=0.4  # optional, requires C library
+
+# Web Scraping / News
+aiohttp>=3.9
+beautifulsoup4>=4.12
+feedparser>=6.0
+
+# Dashboard
+fastapi>=0.115
+uvicorn>=0.30
+jinja2>=3.1
+
+# Database
+aiosqlite>=0.20
+
+# Email
+aiosmtplib>=3.0
+
+# Utilities
+asyncio-throttle>=1.0
+orjson>=3.9
