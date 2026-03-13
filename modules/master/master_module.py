@@ -23,11 +23,18 @@ from core.events import Event, EventBus, EventTypes
 from core.logger import trade_logger
 from modules.trading.trading_engine import TradingEngine
 
+# 예측 모듈 (선택적)
+try:
+    from modules.prediction.prediction_module import PredictionModule
+    HAS_PREDICTION = True
+except ImportError:
+    HAS_PREDICTION = False
+
 
 class MasterModule(BaseModule):
     """마스터 컨트롤 모듈.
 
-    - 장 시작 전: 모듈 1,2,3 데이터 취합 → 최종 투자 종목 선정
+    - 장 시작 전: 모듈 1,2,3 데이터 취합 + AI 예측 → 최종 투자 종목 선정
     - 장 중: 모듈 4와 결합하여 실제 주문 실행
     - 리스크 관리: 포지션 한도, 일일 손실 한도 관리
     """
@@ -38,11 +45,13 @@ class MasterModule(BaseModule):
         registry: PluginRegistry,
         kis_client: KISClient,
         trading_engine: TradingEngine,
+        prediction_module: Optional[Any] = None,
     ):
         super().__init__("master", config)
         self._registry = registry
         self._kis = kis_client
         self._trading = trading_engine
+        self._prediction = prediction_module
         self._event_bus = EventBus()
 
         # 투자 상태
@@ -99,20 +108,37 @@ class MasterModule(BaseModule):
             except Exception as e:
                 logger.error(f"[{provider.name}] 후보 수집 오류: {e}")
 
-        # 2. 종합 점수 계산
+        # 2. AI 예측 점수 반영
+        if self._prediction:
+            try:
+                tickers = list(all_candidates.keys())
+                predictions = await self._prediction.predict_batch(tickers)
+                for pred in predictions:
+                    ticker = pred["ticker"]
+                    if ticker in all_candidates:
+                        all_candidates[ticker].prediction_score = pred["prediction_score"]
+                        if pred["direction"] == "up":
+                            all_candidates[ticker].reasons.append(
+                                f"AI 예측 상승 (신뢰도 {pred['confidence']:.1%})"
+                            )
+                logger.info(f"AI 예측 완료: {len(predictions)}종목")
+            except Exception as e:
+                logger.error(f"AI 예측 배치 오류: {e}")
+
+        # 3. 종합 점수 계산
         for ticker, candidate in all_candidates.items():
             candidate.score = self._calculate_composite_score(candidate)
 
-        # 3. 점수순 정렬 및 상위 N개 선정
+        # 4. 점수순 정렬 및 상위 N개 선정
         sorted_candidates = sorted(
             all_candidates.values(), key=lambda x: x.score, reverse=True
         )
         self._candidates = sorted_candidates[:self._max_positions]
 
-        # 4. DB 저장
+        # 5. DB 저장
         await self._save_candidates(self._candidates)
 
-        # 5. 이벤트 발행
+        # 6. 이벤트 발행
         await self._event_bus.publish(Event(
             event_type=EventTypes.CANDIDATES_UPDATED,
             data={"candidates": [c.model_dump() for c in self._candidates]},
@@ -121,22 +147,39 @@ class MasterModule(BaseModule):
 
         logger.info(f"최종 투자 후보: {len(self._candidates)}종목")
         for c in self._candidates[:5]:
-            logger.info(f"  {c.ticker} | 점수: {c.score:.1f} | 뉴스:{c.news_score:.1f} 센티:{c.sentiment_score:.1f} 정책:{c.policy_score:.1f}")
+            pred_str = f" AI:{c.prediction_score:.1f}" if c.prediction_score > 0 else ""
+            logger.info(f"  {c.ticker} | 점수: {c.score:.1f} | 뉴스:{c.news_score:.1f} 센티:{c.sentiment_score:.1f} 정책:{c.policy_score:.1f}{pred_str}")
 
         return self._candidates
 
     def _calculate_composite_score(self, candidate: StockCandidate) -> float:
-        """뉴스/센티먼트/정책 점수 종합. 가중치 기반."""
-        weights = {
-            "news": 0.35,
-            "sentiment": 0.25,
-            "policy": 0.40,
-        }
-        score = (
-            candidate.news_score * weights["news"]
-            + candidate.sentiment_score * weights["sentiment"]
-            + candidate.policy_score * weights["policy"]
-        )
+        """뉴스/센티먼트/정책/AI예측 점수 종합. 가중치 기반."""
+        if self._prediction and candidate.prediction_score > 0:
+            # AI 예측 모듈 활성화 시: 예측 점수 포함
+            weights = {
+                "news": 0.25,
+                "sentiment": 0.20,
+                "policy": 0.30,
+                "prediction": 0.25,
+            }
+            score = (
+                candidate.news_score * weights["news"]
+                + candidate.sentiment_score * weights["sentiment"]
+                + candidate.policy_score * weights["policy"]
+                + candidate.prediction_score * weights["prediction"]
+            )
+        else:
+            # 기존 방식 (예측 모듈 없을 때)
+            weights = {
+                "news": 0.35,
+                "sentiment": 0.25,
+                "policy": 0.40,
+            }
+            score = (
+                candidate.news_score * weights["news"]
+                + candidate.sentiment_score * weights["sentiment"]
+                + candidate.policy_score * weights["policy"]
+            )
         return round(score, 2)
 
     # ─── 장중 로직 ─────────────────────────────────────────
@@ -350,10 +393,11 @@ class MasterModule(BaseModule):
                 await db.execute(
                     """INSERT INTO stock_candidates
                        (date, ticker, name, total_score, news_score, sentiment_score,
-                        policy_score, technical_score, signal, reasons)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        policy_score, technical_score, prediction_score, signal, reasons)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                     (today, c.ticker, c.name, c.score, c.news_score,
                      c.sentiment_score, c.policy_score, c.technical_score,
+                     c.prediction_score,
                      c.signal.value if c.signal else "hold",
                      "|".join(c.reasons)),
                 )

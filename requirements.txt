@@ -21,6 +21,11 @@ numpy>=1.24
 pandas-ta>=0.3
 ta-lib>=0.4  # optional, requires C library
 
+# ML / AI Prediction
+xgboost>=2.0  # XGBoost classifier for short-term prediction
+torch>=2.0  # optional, LSTM model for trend prediction
+scikit-learn>=1.3
+
 # Web Scraping / News
 aiohttp>=3.9
 beautifulsoup4>=4.12

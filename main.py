@@ -35,6 +35,12 @@ from modules.master.master_module import MasterModule
 from modules.watcher.watcher_module import WatcherModule
 from modules.dashboard.dashboard import create_dashboard
 
+try:
+    from modules.prediction.prediction_module import PredictionModule
+    HAS_PREDICTION = True
+except ImportError:
+    HAS_PREDICTION = False
+
 
 class AutoTraderApp:
     """메인 애플리케이션. 모든 모듈의 생명주기를 관리."""
@@ -146,12 +152,22 @@ class AutoTraderApp:
         trading = TradingEngine(module_cfg.get("trading", {}), self._kis)
         self._registry.register(trading)
 
+        # 모듈 7: AI 예측 (선택적)
+        prediction = None
+        if HAS_PREDICTION and module_cfg.get("prediction", {}).get("enabled", True):
+            prediction = PredictionModule(
+                module_cfg.get("prediction", {}), self._kis
+            )
+            self._registry.register(prediction)
+            logger.info("AI 예측 모듈 활성화")
+
         # 모듈 5: 마스터
         self._master = MasterModule(
             config=module_cfg,
             registry=self._registry,
             kis_client=self._kis,
             trading_engine=trading,
+            prediction_module=prediction,
         )
         self._registry.register(self._master)
 
