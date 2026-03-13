@@ -51,6 +51,15 @@ modules:
       - "BBANDS"
     tick_interval_seconds: 5
 
+  prediction:
+    enabled: true
+    lookback_days: 120
+    sequence_length: 20
+    min_train_samples: 60
+    prediction_horizon: 3  # 3일 후 수익률 예측
+    xgb_weight: 0.5
+    lstm_weight: 0.5
+
   master:
     max_positions: 10
     max_single_position_pct: 15.0

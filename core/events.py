@@ -100,6 +100,10 @@ class EventTypes:
     # 종목 후보
     CANDIDATES_UPDATED = "candidates.updated"
 
+    # AI 예측
+    PREDICTION_GENERATED = "prediction.generated"
+    PREDICTION_BATCH_DONE = "prediction.batch_done"
+
     # 트레이딩
     SIGNAL_GENERATED = "signal.generated"
     ORDER_SUBMITTED = "order.submitted"

@@ -106,6 +106,7 @@ class StockCandidate(BaseModel):
     sentiment_score: float = 0.0
     policy_score: float = 0.0
     technical_score: float = 0.0
+    prediction_score: float = 0.0
     target_price: Optional[float] = None
     stop_loss_price: Optional[float] = None
     evaluated_at: datetime = Field(default_factory=datetime.now)

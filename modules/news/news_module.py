@@ -11,8 +11,13 @@ from datetime import datetime
 from typing import Any
 
 import aiohttp
-import feedparser
 from bs4 import BeautifulSoup
+
+try:
+    import feedparser
+    HAS_FEEDPARSER = True
+except ImportError:
+    HAS_FEEDPARSER = False
 from loguru import logger
 
 from ai.gemini_client import GeminiClient
@@ -146,6 +151,8 @@ class NewsAnalysisModule(DataProviderModule):
                         continue
                     content = await resp.text()
 
+                if not HAS_FEEDPARSER:
+                    continue
                 feed = feedparser.parse(content)
                 for entry in feed.entries[:15]:
                     articles.append({
@@ -194,6 +201,8 @@ class NewsAnalysisModule(DataProviderModule):
                         continue
                     content = await resp.text()
 
+                if not HAS_FEEDPARSER:
+                    continue
                 feed = feedparser.parse(content)
                 count = 0
                 for entry in feed.entries[:10]:
