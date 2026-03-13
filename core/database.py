@@ -120,6 +120,7 @@ async def init_db() -> None:
                 sentiment_score REAL DEFAULT 0,
                 policy_score REAL DEFAULT 0,
                 technical_score REAL DEFAULT 0,
+                prediction_score REAL DEFAULT 0,
                 signal TEXT,
                 reasons TEXT,
                 created_at TEXT DEFAULT (datetime('now', 'localtime'))

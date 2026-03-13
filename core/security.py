@@ -31,7 +31,11 @@ def _derive_machine_key() -> bytes:
     Fernet 호환 32바이트 키(Base64 URL-safe) 생성.
     → 같은 PC, 같은 사용자에서만 복호화 가능.
     """
-    machine_id = f"{platform.node()}:{os.getlogin()}:KR_STOCK_AUTOTRADER_v1"
+    try:
+        username = os.getlogin()
+    except OSError:
+        username = os.environ.get("USER", os.environ.get("USERNAME", "default"))
+    machine_id = f"{platform.node()}:{username}:KR_STOCK_AUTOTRADER_v1"
     digest = hashlib.sha256(machine_id.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
 
