@@ -17,7 +17,7 @@ modules:
 crypto:
   enabled: true
   watchlist: "ALL_KRW"        # 업비트 KRW 전체 마켓 (ALL_KRW 또는 특정 코인 목록)
-  use_paper_trading: true     # 페이퍼 트레이딩 (실거래 전환 시 false)
+  use_paper_trading: false     # 페이퍼 트레이딩 (실거래 전환 시 false)
 
   risk:
     max_positions: 5              # 동시 보유 코인 수
