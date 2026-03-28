@@ -44,7 +44,7 @@ class GeminiClient:
         self._sdk_mode: str | None = None
 
     async def initialize(self) -> None:
-        """Gemini 클라이언트 초기화."""
+        """Gemini 클라이언트 초기화 (API 호출 없이 클라이언트만 생성)."""
         if not self.config.api_key:
             raise ValueError(
                 "GEMINI_API_KEY 미설정.\n"
@@ -53,30 +53,20 @@ class GeminiClient:
                 "API 키 발급: https://aistudio.google.com/app/apikey"
             )
 
-        try:
-            self._sdk_mode = _detect_sdk()
+        self._sdk_mode = _detect_sdk()
 
-            if self._sdk_mode == "new":
-                from google import genai
-                self._client = genai.Client(api_key=self.config.api_key)
-                await asyncio.to_thread(
-                    self._client.models.generate_content,
-                    model=self.config.model,
-                    contents="ping",
-                )
-            else:
-                import warnings
-                import google.generativeai as genai
-                with warnings.catch_warnings():
-                    warnings.simplefilter("ignore")
-                    genai.configure(api_key=self.config.api_key)
-                self._client = genai.GenerativeModel(self.config.model)
-                await asyncio.to_thread(self._client.generate_content, "ping")
+        if self._sdk_mode == "new":
+            from google import genai
+            self._client = genai.Client(api_key=self.config.api_key)
+        else:
+            import warnings
+            import google.generativeai as genai
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore")
+                genai.configure(api_key=self.config.api_key)
+            self._client = genai.GenerativeModel(self.config.model)
 
-            logger.info(f"Gemini 초기화 완료: {self.config.model} (SDK: {self._sdk_mode})")
-        except Exception as e:
-            logger.error(f"Gemini 초기화 실패: {e}")
-            raise
+        logger.info(f"Gemini 초기화 완료: {self.config.model} (SDK: {self._sdk_mode})")
 
     async def analyze(self, prompt: str, system_instruction: str = "") -> str:
         """텍스트 분석 요청. 429 발생 시 최대 3회 재시도."""
