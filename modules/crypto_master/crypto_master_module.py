@@ -64,14 +64,6 @@ class CryptoMasterModule(BaseModule):
         self._min_order_krw = risk.get("min_order_krw", 5000)
         self._paper_trading = config.get("use_paper_trading", True)
 
-        # 신호 통합 가중치
-        signal_weights = config.get("modules", {}).get("crypto_trading", {}).get(
-            "signal_weights", {}
-        )
-        self._w_technical = signal_weights.get("technical", 0.5)
-        self._w_news = signal_weights.get("news", 0.3)
-        self._w_fear_greed = signal_weights.get("fear_greed", 0.2)
-
         # 상태
         self._positions: dict[str, dict] = {}  # {market: position_dict}
         self._paper_balance: float = 1_000_000.0  # 페이퍼 트레이딩 초기 잔고 (100만원)
@@ -267,20 +259,22 @@ class CryptoMasterModule(BaseModule):
         """AI 선정 종목 매수 시 선정 당시 가격을 DB에 업데이트."""
         try:
             db = await get_db()
-            await db.execute(
-                """UPDATE ai_selections
-                   SET price_at_selection = ?
-                   WHERE id = (
-                       SELECT id FROM ai_selections
-                       WHERE market = ?
-                         AND price_at_selection = 0
-                       ORDER BY selected_at DESC
-                       LIMIT 1
-                   )""",
-                (price, market),
-            )
-            await db.commit()
-            await db.close()
+            try:
+                await db.execute(
+                    """UPDATE ai_selections
+                       SET price_at_selection = ?
+                       WHERE id = (
+                           SELECT id FROM ai_selections
+                           WHERE market = ?
+                             AND price_at_selection = 0
+                           ORDER BY selected_at DESC
+                           LIMIT 1
+                       )""",
+                    (price, market),
+                )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.debug(f"AI 선정 가격 업데이트 오류: {e}")
 
@@ -482,12 +476,14 @@ class CryptoMasterModule(BaseModule):
             # DB 포지션 업데이트
             try:
                 db = await get_db()
-                await db.execute(
-                    "UPDATE crypto_positions SET updated_at = ? WHERE market = ?",
-                    (datetime.now().isoformat(), market),
-                )
-                await db.commit()
-                await db.close()
+                try:
+                    await db.execute(
+                        "UPDATE crypto_positions SET updated_at = ? WHERE market = ?",
+                        (datetime.now().isoformat(), market),
+                    )
+                    await db.commit()
+                finally:
+                    await db.close()
             except Exception as e:
                 logger.error(f"포지션 DB 업데이트 오류: {e}")
 
@@ -609,23 +605,25 @@ class CryptoMasterModule(BaseModule):
     ) -> None:
         try:
             db = await get_db()
-            await db.execute(
-                """INSERT INTO crypto_orders
-                   (market, side, volume, price, ord_type, status, uuid, is_paper)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    market,
-                    side,
-                    volume,
-                    price,
-                    order_result.get("ord_type", "market"),
-                    order_result.get("state", "done"),
-                    order_result.get("uuid", ""),
-                    1 if self._paper_trading else 0,
-                ),
-            )
-            await db.commit()
-            await db.close()
+            try:
+                await db.execute(
+                    """INSERT INTO crypto_orders
+                       (market, side, volume, price, ord_type, status, uuid, is_paper)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        market,
+                        side,
+                        volume,
+                        price,
+                        order_result.get("ord_type", "market"),
+                        order_result.get("state", "done"),
+                        order_result.get("uuid", ""),
+                        1 if self._paper_trading else 0,
+                    ),
+                )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.error(f"주문 DB 저장 오류: {e}")
 
@@ -635,23 +633,25 @@ class CryptoMasterModule(BaseModule):
             return
         try:
             db = await get_db()
-            await db.execute(
-                """INSERT OR REPLACE INTO crypto_positions
-                   (market, volume, avg_price, current_price, pnl_pct,
-                    stop_loss_price, take_profit_price, is_paper)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    market,
-                    pos.get("volume", 0),
-                    pos.get("avg_price", 0),
-                    pos.get("current_price", 0),
-                    pos.get("pnl_pct", 0),
-                    pos.get("stop_loss_price", 0),
-                    pos.get("take_profit_price", 0),
-                    1 if self._paper_trading else 0,
-                ),
-            )
-            await db.commit()
-            await db.close()
+            try:
+                await db.execute(
+                    """INSERT OR REPLACE INTO crypto_positions
+                       (market, volume, avg_price, current_price, pnl_pct,
+                        stop_loss_price, take_profit_price, is_paper)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        market,
+                        pos.get("volume", 0),
+                        pos.get("avg_price", 0),
+                        pos.get("current_price", 0),
+                        pos.get("pnl_pct", 0),
+                        pos.get("stop_loss_price", 0),
+                        pos.get("take_profit_price", 0),
+                        1 if self._paper_trading else 0,
+                    ),
+                )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.error(f"포지션 DB 저장 오류: {e}")

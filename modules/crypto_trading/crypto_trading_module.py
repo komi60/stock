@@ -108,7 +108,9 @@ class CryptoTradingModule(BaseModule):
                 "macd_hist": indicators.get("macd_hist", 0),
                 "bb_position": round(indicators.get("bb_position", 0.5), 3),
                 "atr": indicators.get("atr", 0),
-                "ema_trend": indicators.get("ema_trend", "neutral"),
+                "ema_trend": {1.0: "bullish", -1.0: "bearish", 0.0: "neutral"}.get(
+                    indicators.get("ema_trend", 0.0), "neutral"
+                ),
                 "current_price": current_price,
                 "entry_price": current_price,
                 "stop_loss_price": stop_loss,
@@ -505,27 +507,29 @@ class CryptoTradingModule(BaseModule):
         """신호 DB 저장."""
         try:
             db = await get_db()
-            await db.execute(
-                """INSERT INTO crypto_signals
-                   (market, signal, confidence, rsi, macd, bb_position, atr,
-                    ema_trend, fear_greed_index, news_score, total_score)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                (
-                    signal_data.get("market", ""),
-                    signal_data.get("signal", SIGNAL_HOLD),
-                    signal_data.get("confidence", 0.0),
-                    signal_data.get("rsi"),
-                    signal_data.get("macd"),
-                    signal_data.get("bb_position"),
-                    signal_data.get("atr"),
-                    str(signal_data.get("ema_trend", "neutral")),
-                    signal_data.get("fear_greed_index"),
-                    signal_data.get("news_score", 0.0),
-                    signal_data.get("total_score", 0.0),
-                ),
-            )
-            await db.commit()
-            await db.close()
+            try:
+                await db.execute(
+                    """INSERT INTO crypto_signals
+                       (market, signal, confidence, rsi, macd, bb_position, atr,
+                        ema_trend, fear_greed_index, news_score, total_score)
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        signal_data.get("market", ""),
+                        signal_data.get("signal", SIGNAL_HOLD),
+                        signal_data.get("confidence", 0.0),
+                        signal_data.get("rsi"),
+                        signal_data.get("macd"),
+                        signal_data.get("bb_position"),
+                        signal_data.get("atr"),
+                        signal_data.get("ema_trend", "neutral"),
+                        signal_data.get("fear_greed_index"),
+                        signal_data.get("news_score", 0.0),
+                        signal_data.get("total_score", 0.0),
+                    ),
+                )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.error(f"신호 DB 저장 오류: {e}")
 

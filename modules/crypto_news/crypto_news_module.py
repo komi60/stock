@@ -354,22 +354,24 @@ JSON 배열만 응답하세요."""
     async def _save_ai_selections(self, picks: list[dict]) -> None:
         try:
             db = await get_db()
-            for p in picks:
-                await db.execute(
-                    """INSERT INTO ai_selections
-                       (market, reason, confidence, news_summary, fear_greed_index, selected_at)
-                       VALUES (?, ?, ?, ?, ?, ?)""",
-                    (
-                        p["market"],
-                        p.get("reason", ""),
-                        p.get("confidence", 0),
-                        p.get("news_summary", ""),
-                        p.get("fear_greed_index", 50),
-                        p.get("selected_at", datetime.now().isoformat()),
-                    ),
-                )
-            await db.commit()
-            await db.close()
+            try:
+                for p in picks:
+                    await db.execute(
+                        """INSERT INTO ai_selections
+                           (market, reason, confidence, news_summary, fear_greed_index, selected_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (
+                            p["market"],
+                            p.get("reason", ""),
+                            p.get("confidence", 0),
+                            p.get("news_summary", ""),
+                            p.get("fear_greed_index", 50),
+                            p.get("selected_at", datetime.now().isoformat()),
+                        ),
+                    )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.error(f"AI 선정 DB 저장 오류: {e}")
 
@@ -379,13 +381,15 @@ JSON 배열만 응답하세요."""
         """채널 신뢰도 테이블 초기화."""
         try:
             db = await get_db()
-            for _, source in CRYPTO_RSS_FEEDS:
-                await db.execute(
-                    "INSERT OR IGNORE INTO channel_trust (channel) VALUES (?)",
-                    (source,),
-                )
-            await db.commit()
-            await db.close()
+            try:
+                for _, source in CRYPTO_RSS_FEEDS:
+                    await db.execute(
+                        "INSERT OR IGNORE INTO channel_trust (channel) VALUES (?)",
+                        (source,),
+                    )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.debug(f"채널 신뢰도 초기화 오류: {e}")
 
@@ -393,10 +397,12 @@ JSON 배열만 응답하세요."""
         """채널별 신뢰도 로드."""
         try:
             db = await get_db()
-            cursor = await db.execute("SELECT channel, trust_score FROM channel_trust")
-            rows = await cursor.fetchall()
-            await db.close()
-            return {r[0]: float(r[1]) for r in rows}
+            try:
+                cursor = await db.execute("SELECT channel, trust_score FROM channel_trust")
+                rows = await cursor.fetchall()
+                return {r[0]: float(r[1]) for r in rows}
+            finally:
+                await db.close()
         except Exception:
             return {}
 
@@ -405,16 +411,18 @@ JSON 배열만 응답하세요."""
         try:
             threshold = (datetime.now() - timedelta(hours=24)).isoformat()
             db = await get_db()
-            cursor = await db.execute(
-                """SELECT id, market, price_at_selection, selected_at
-                   FROM ai_selections
-                   WHERE result IS NULL
-                     AND price_at_selection > 0
-                     AND selected_at <= ?""",
-                (threshold,),
-            )
-            rows = await cursor.fetchall()
-            await db.close()
+            try:
+                cursor = await db.execute(
+                    """SELECT id, market, price_at_selection, selected_at
+                       FROM ai_selections
+                       WHERE result IS NULL
+                         AND price_at_selection > 0
+                         AND selected_at <= ?""",
+                    (threshold,),
+                )
+                rows = await cursor.fetchall()
+            finally:
+                await db.close()
 
             if not rows:
                 return
@@ -422,31 +430,32 @@ JSON 배열만 응답하세요."""
             # 현재가 조회를 위해 업비트 API 호출은 master가 담당
             # 여기서는 DB에서 price_after_24h가 채워진 것만 평가
             db = await get_db()
-            cursor2 = await db.execute(
-                """SELECT id, market, price_at_selection, price_after_24h
-                   FROM ai_selections
-                   WHERE result IS NULL AND price_after_24h IS NOT NULL"""
-            )
-            pending = await cursor2.fetchall()
+            try:
+                cursor2 = await db.execute(
+                    """SELECT id, market, price_at_selection, price_after_24h
+                       FROM ai_selections
+                       WHERE result IS NULL AND price_after_24h IS NOT NULL"""
+                )
+                pending = await cursor2.fetchall()
 
-            hit_count = 0
-            for row in pending:
-                sel_id, market, price_buy, price_now = row
-                if price_buy and price_buy > 0 and price_now:
-                    pnl_pct = (price_now / price_buy - 1) * 100
-                    result = "hit" if pnl_pct > 0 else "miss"
-                    await db.execute(
-                        "UPDATE ai_selections SET result = ? WHERE id = ?",
-                        (result, sel_id),
-                    )
-                    if result == "hit":
-                        hit_count += 1
+                hit_count = 0
+                for row in pending:
+                    sel_id, market, price_buy, price_now = row
+                    if price_buy and price_buy > 0 and price_now:
+                        pnl_pct = (price_now / price_buy - 1) * 100
+                        result = "hit" if pnl_pct > 0 else "miss"
+                        await db.execute(
+                            "UPDATE ai_selections SET result = ? WHERE id = ?",
+                            (result, sel_id),
+                        )
+                        if result == "hit":
+                            hit_count += 1
 
-            if pending:
-                await db.commit()
-                logger.info(f"채널 성과 평가: {len(pending)}건 중 {hit_count}건 적중")
-
-            await db.close()
+                if pending:
+                    await db.commit()
+                    logger.info(f"채널 성과 평가: {len(pending)}건 중 {hit_count}건 적중")
+            finally:
+                await db.close()
         except Exception as e:
             logger.debug(f"채널 성과 평가 오류: {e}")
 
@@ -472,25 +481,27 @@ JSON 배열만 응답하세요."""
     async def _save_articles(self, articles: list[dict]) -> None:
         try:
             db = await get_db()
-            for a in articles:
-                await db.execute(
-                    """INSERT OR IGNORE INTO crypto_news
-                       (title, content, source, url, sentiment, impact_score,
-                        related_coins, ai_summary, published_at)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        a["title"],
-                        a.get("content", ""),
-                        a.get("source", ""),
-                        a.get("url", ""),
-                        a.get("sentiment", "neutral"),
-                        a.get("impact_score", 0.0),
-                        json.dumps(a.get("related_coins", []), ensure_ascii=False),
-                        a.get("ai_summary", ""),
-                        a.get("published_at", datetime.now().isoformat()),
-                    ),
-                )
-            await db.commit()
-            await db.close()
+            try:
+                for a in articles:
+                    await db.execute(
+                        """INSERT OR IGNORE INTO crypto_news
+                           (title, content, source, url, sentiment, impact_score,
+                            related_coins, ai_summary, published_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (
+                            a["title"],
+                            a.get("content", ""),
+                            a.get("source", ""),
+                            a.get("url", ""),
+                            a.get("sentiment", "neutral"),
+                            a.get("impact_score", 0.0),
+                            json.dumps(a.get("related_coins", []), ensure_ascii=False),
+                            a.get("ai_summary", ""),
+                            a.get("published_at", datetime.now().isoformat()),
+                        ),
+                    )
+                await db.commit()
+            finally:
+                await db.close()
         except Exception as e:
             logger.error(f"크립토 뉴스 DB 저장 오류: {e}")

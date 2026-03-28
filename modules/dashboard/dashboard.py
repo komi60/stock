@@ -139,120 +139,141 @@ def create_dashboard(
         try:
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
-            cursor = await db.execute(
-                """SELECT id, market, confidence, reason, news_summary,
-                          price_at_selection, price_after_24h, result, selected_at
-                   FROM ai_selections
-                   WHERE selected_at >= ?
-                   ORDER BY confidence DESC""",
-                (today,),
-            )
-            rows = await cursor.fetchall()
-            await db.close()
-            result = [
-                {
-                    "id": r[0], "market": r[1], "confidence": r[2],
-                    "reason": r[3], "news_summary": r[4],
-                    "price_at_selection": r[5], "price_after_24h": r[6],
-                    "result": r[7], "selected_at": r[8],
-                }
-                for r in rows
-            ]
-            return {"date": today, "candidates": result}
+            try:
+                cursor = await db.execute(
+                    """SELECT id, market, confidence, reason, news_summary,
+                              price_at_selection, price_after_24h, result, selected_at
+                       FROM ai_selections
+                       WHERE selected_at >= ?
+                       ORDER BY confidence DESC""",
+                    (today,),
+                )
+                rows = await cursor.fetchall()
+                return {"date": today, "candidates": [
+                    {
+                        "id": r[0], "market": r[1], "confidence": r[2],
+                        "reason": r[3], "news_summary": r[4],
+                        "price_at_selection": r[5], "price_after_24h": r[6],
+                        "result": r[7], "selected_at": r[8],
+                    }
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "candidates": []}
 
     @app.get("/api/orders")
     async def recent_orders():
         try:
             db = await get_db()
-            cursor = await db.execute(
-                "SELECT * FROM crypto_orders ORDER BY created_at DESC LIMIT 50"
-            )
-            rows = await cursor.fetchall()
-            await db.close()
-            orders = [
-                {
-                    "id": r[0], "market": r[1], "side": r[2], "volume": r[3],
-                    "price": r[4], "ord_type": r[5], "status": r[6],
-                    "uuid": r[7], "is_paper": r[8], "created_at": r[9],
-                }
-                for r in rows
-            ]
-            return {"orders": orders}
+            try:
+                cursor = await db.execute(
+                    "SELECT * FROM crypto_orders ORDER BY created_at DESC LIMIT 50"
+                )
+                rows = await cursor.fetchall()
+                return {"orders": [
+                    {
+                        "id": r[0], "market": r[1], "side": r[2], "volume": r[3],
+                        "price": r[4], "ord_type": r[5], "status": r[6],
+                        "uuid": r[7], "is_paper": r[8], "created_at": r[9],
+                    }
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "orders": []}
 
     @app.get("/api/performance")
     async def performance_history():
+        """크립토 주문 기반 성과 (일별 집계)."""
         try:
             db = await get_db()
-            cursor = await db.execute("SELECT * FROM daily_reports ORDER BY date DESC LIMIT 30")
-            rows = await cursor.fetchall()
-            await db.close()
-            reports = [{"date": r[1], "total_trades": r[2], "winning_trades": r[3], "losing_trades": r[4],
-                         "total_pnl": r[5], "total_pnl_pct": r[6], "max_drawdown_pct": r[7]} for r in rows]
-            return {"reports": reports}
+            try:
+                cursor = await db.execute(
+                    """SELECT DATE(created_at) as date,
+                              COUNT(*) as total_orders,
+                              SUM(CASE WHEN side='ask' THEN 1 ELSE 0 END) as sells
+                       FROM crypto_orders
+                       GROUP BY DATE(created_at)
+                       ORDER BY date DESC LIMIT 30"""
+                )
+                rows = await cursor.fetchall()
+                return {"reports": [{"date": r[0], "total_orders": r[1], "sells": r[2]} for r in rows]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "reports": []}
 
     @app.get("/api/news")
     async def recent_news():
         try:
             db = await get_db()
-            cursor = await db.execute(
-                "SELECT title, source, sentiment, impact_score, ai_summary, created_at "
-                "FROM news ORDER BY created_at DESC LIMIT 50")
-            rows = await cursor.fetchall()
-            await db.close()
-            news = [{"title": r[0], "source": r[1], "sentiment": r[2], "impact_score": r[3],
-                      "summary": r[4], "time": r[5]} for r in rows]
-            return {"news": news}
+            try:
+                cursor = await db.execute(
+                    """SELECT title, source, sentiment, impact_score, ai_summary, created_at
+                       FROM crypto_news ORDER BY created_at DESC LIMIT 50"""
+                )
+                rows = await cursor.fetchall()
+                return {"news": [
+                    {"title": r[0], "source": r[1], "sentiment": r[2],
+                     "impact_score": r[3], "summary": r[4], "time": r[5]}
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "news": []}
 
     @app.get("/api/rumors")
     async def recent_rumors():
+        """채널 신뢰도 정보 반환 (루머 테이블 대체)."""
         try:
             db = await get_db()
-            cursor = await db.execute(
-                "SELECT content, source_channel, channel_trust_score, sentiment, "
-                "impact_score, related_tickers, verified, collected_at "
-                "FROM rumors ORDER BY collected_at DESC LIMIT 30")
-            rows = await cursor.fetchall()
-            await db.close()
-            rumors = [{"content": r[0], "source_channel": r[1], "trust_score": r[2],
-                        "sentiment": r[3], "impact_score": r[4], "related_tickers": r[5],
-                        "verified": r[6], "time": r[7]} for r in rows]
-            return {"rumors": rumors}
+            try:
+                cursor = await db.execute(
+                    """SELECT channel, trust_score, total_predictions, correct_predictions
+                       FROM channel_trust ORDER BY trust_score DESC"""
+                )
+                rows = await cursor.fetchall()
+                return {"channel_trust": [
+                    {"channel": r[0], "trust_score": r[1],
+                     "total_predictions": r[2], "correct_predictions": r[3]}
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "channel_trust": []}
 
     @app.get("/api/stats")
     async def dashboard_stats():
         try:
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
-            c1 = await db.execute(
-                "SELECT COUNT(*) FROM crypto_news WHERE created_at >= ?", (today,))
-            news_today = (await c1.fetchone())[0]
-            c2 = await db.execute("SELECT COUNT(*) FROM crypto_news")
-            news_total = (await c2.fetchone())[0]
-            c3 = await db.execute(
-                "SELECT sentiment, COUNT(*) FROM crypto_news WHERE sentiment != 'pending' GROUP BY sentiment")
-            sentiment_dist = {r[0]: r[1] for r in await c3.fetchall()}
-            c4 = await db.execute(
-                "SELECT COUNT(*) FROM crypto_orders WHERE created_at >= ?", (today,))
-            orders_today = (await c4.fetchone())[0]
-            c5 = await db.execute(
-                "SELECT COUNT(*) FROM ai_selections WHERE selected_at >= ?", (today,))
-            candidates_today = (await c5.fetchone())[0]
-            await db.close()
-            return {
-                "news_today": news_today, "news_total": news_total,
-                "orders_today": orders_today, "candidates_today": candidates_today,
-                "sentiment_distribution": sentiment_dist,
-            }
+            try:
+                c1 = await db.execute(
+                    "SELECT COUNT(*) FROM crypto_news WHERE created_at >= ?", (today,))
+                news_today = (await c1.fetchone())[0]
+                c2 = await db.execute("SELECT COUNT(*) FROM crypto_news")
+                news_total = (await c2.fetchone())[0]
+                c3 = await db.execute(
+                    "SELECT sentiment, COUNT(*) FROM crypto_news WHERE sentiment != 'pending' GROUP BY sentiment")
+                sentiment_dist = {r[0]: r[1] for r in await c3.fetchall()}
+                c4 = await db.execute(
+                    "SELECT COUNT(*) FROM crypto_orders WHERE created_at >= ?", (today,))
+                orders_today = (await c4.fetchone())[0]
+                c5 = await db.execute(
+                    "SELECT COUNT(*) FROM ai_selections WHERE selected_at >= ?", (today,))
+                candidates_today = (await c5.fetchone())[0]
+                return {
+                    "news_today": news_today, "news_total": news_total,
+                    "orders_today": orders_today, "candidates_today": candidates_today,
+                    "sentiment_distribution": sentiment_dist,
+                }
+            finally:
+                await db.close()
         except Exception as e:
             return {"error": str(e)}
 
