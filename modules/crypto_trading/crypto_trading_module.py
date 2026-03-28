@@ -189,6 +189,10 @@ class CryptoTradingModule(BaseModule):
             cur_vol = df["volume"].iloc[-1]
             indicators["volume_ratio"] = float(cur_vol / avg_vol) if avg_vol > 0 else 1.0
 
+        # 양봉/음봉 판단용 가격
+        indicators["open_price"] = float(df["open"].iloc[-1])
+        indicators["close_price"] = float(df["close"].iloc[-1])
+
         return indicators
 
     def _calc_with_pandas_ta(self, df: pd.DataFrame) -> dict[str, float]:
@@ -322,86 +326,149 @@ class CryptoTradingModule(BaseModule):
 
         return indicators
 
-    # ─── 신호 판단 ─────────────────────────────────────────
+    # ─── 3가지 알려진 투자기법 ────────────────────────────
+
+    def _strategy_rsi_oversold(self, indicators: dict) -> tuple[str, float]:
+        """① RSI 과매도 반등 전략.
+
+        RSI < 33 + BB 하단 근접 → BUY
+        RSI < 25 + BB 최하단 → STRONG_BUY
+        RSI > 68 → SELL / RSI > 75 → STRONG_SELL
+        """
+        rsi = indicators.get("rsi", 50)
+        bb_pos = indicators.get("bb_position", 0.5)
+
+        if rsi < 25 and bb_pos < 0.15:
+            return SIGNAL_STRONG_BUY, 0.9
+        elif rsi < 33 and bb_pos < 0.3:
+            conf = 0.5 + (33 - rsi) / 33 * 0.25 + max(0, 0.3 - bb_pos) / 0.3 * 0.15
+            return SIGNAL_BUY, min(round(conf, 3), 0.85)
+        elif rsi > 75:
+            return SIGNAL_STRONG_SELL, 0.85
+        elif rsi > 68:
+            conf = 0.5 + (rsi - 68) / 32 * 0.3
+            return SIGNAL_SELL, min(round(conf, 3), 0.85)
+        return SIGNAL_HOLD, 0.0
+
+    def _strategy_macd_cross(self, indicators: dict) -> tuple[str, float]:
+        """② MACD 골든크로스/데드크로스 전략.
+
+        MACD선 > 시그널선 (히스토그램 양수) → BUY
+        MACD선 < 시그널선 (히스토그램 음수) → SELL
+        """
+        macd = indicators.get("macd", 0)
+        macd_sig = indicators.get("macd_signal", 0)
+        macd_hist = indicators.get("macd_hist", 0)
+
+        if not macd_hist:
+            return SIGNAL_HOLD, 0.0
+
+        denominator = abs(macd) + 1e-10
+        strength = min(abs(macd_hist) / denominator, 1.0)
+
+        if macd > macd_sig and macd_hist > 0:
+            conf = 0.5 + strength * 0.35
+            return SIGNAL_BUY, round(min(conf, 0.85), 3)
+        elif macd < macd_sig and macd_hist < 0:
+            conf = 0.5 + strength * 0.35
+            return SIGNAL_SELL, round(min(conf, 0.85), 3)
+        return SIGNAL_HOLD, 0.0
+
+    def _strategy_bb_bounce(self, indicators: dict) -> tuple[str, float]:
+        """③ 볼린저 밴드 하단 반등 전략.
+
+        bb_position < 0.1 + 양봉 → BUY
+        bb_position > 0.9 → SELL
+        """
+        bb_pos = indicators.get("bb_position", 0.5)
+        open_price = indicators.get("open_price", 0)
+        close_price = indicators.get("close_price", 0)
+
+        is_bullish = close_price >= open_price if open_price > 0 else True
+
+        if bb_pos < 0.05:
+            conf = 0.75 + (0.05 - bb_pos) / 0.05 * 0.1 if is_bullish else 0.6
+            return SIGNAL_STRONG_BUY if is_bullish else SIGNAL_BUY, round(min(conf, 0.85), 3)
+        elif bb_pos < 0.1:
+            conf = (0.6 + (0.1 - bb_pos) / 0.1 * 0.2) if is_bullish else 0.5
+            return SIGNAL_BUY, round(min(conf, 0.8), 3)
+        elif bb_pos > 0.9:
+            conf = 0.55 + (bb_pos - 0.9) / 0.1 * 0.25
+            return SIGNAL_SELL, round(min(conf, 0.8), 3)
+        return SIGNAL_HOLD, 0.0
+
+    # ─── 신호 판단 (다중 전략 투표) ────────────────────────
 
     def _evaluate_signal(
         self, indicators: dict[str, float]
     ) -> tuple[str, float]:
-        """기술적 지표 종합 → 매매 신호 및 신뢰도."""
-        scores: list[float] = []
+        """3가지 전략 다수결 + 가중 평균 → 최종 매매 신호."""
 
-        # 1. EMA 배열
+        _signal_to_score = {
+            SIGNAL_STRONG_BUY: 2,
+            SIGNAL_BUY: 1,
+            SIGNAL_HOLD: 0,
+            SIGNAL_SELL: -1,
+            SIGNAL_STRONG_SELL: -2,
+        }
+
+        strategies = [
+            self._strategy_rsi_oversold(indicators),
+            self._strategy_macd_cross(indicators),
+            self._strategy_bb_bounce(indicators),
+        ]
+
+        # EMA 추세를 보조 필터로 사용 (배열 방향)
         ema_trend = indicators.get("ema_trend", 0.0)
-        if ema_trend == 1.0:
-            scores.append(2.0)   # 정배열 (강세)
-        elif ema_trend == -1.0:
-            scores.append(-2.0)  # 역배열 (약세)
-        else:
-            scores.append(0.0)
 
-        # 2. RSI
-        rsi = indicators.get("rsi", 50)
-        if rsi < 30:
-            scores.append(2.0)   # 과매도
-        elif rsi < 40:
-            scores.append(1.0)
-        elif rsi > 70:
-            scores.append(-2.0)  # 과매수
-        elif rsi > 60:
-            scores.append(-1.0)
-        else:
-            scores.append(0.0)
+        weighted_score = 0.0
+        total_weight = 0.0
+        buy_votes = 0
+        sell_votes = 0
 
-        # 3. MACD 히스토그램
-        macd_hist = indicators.get("macd_hist", 0)
-        macd = indicators.get("macd", 0)
-        macd_sig = indicators.get("macd_signal", 0)
+        for sig, conf in strategies:
+            score = _signal_to_score.get(sig, 0)
+            if score != 0:
+                weight = conf
+                weighted_score += score * weight
+                total_weight += weight
+                if score > 0:
+                    buy_votes += 1
+                elif score < 0:
+                    sell_votes += 1
 
-        if macd_hist > 0 and macd > macd_sig:
-            scores.append(1.5)
-        elif macd_hist < 0 and macd < macd_sig:
-            scores.append(-1.5)
-        else:
-            scores.append(0.0)
+        # EMA 추세 반영 (약한 보조 신호, 가중치 0.3)
+        if ema_trend != 0.0:
+            weighted_score += ema_trend * 0.3
+            total_weight += 0.3
 
-        # 4. 볼린저 밴드 위치
-        bb_pos = indicators.get("bb_position", 0.5)
-        if bb_pos < 0.1:
-            scores.append(2.0)   # 하단 이탈 → 반등 기대
-        elif bb_pos < 0.3:
-            scores.append(1.0)
-        elif bb_pos > 0.9:
-            scores.append(-2.0)  # 상단 돌파 → 과열
-        elif bb_pos > 0.7:
-            scores.append(-1.0)
-        else:
-            scores.append(0.0)
-
-        # 5. 거래량
+        # 거래량 증폭 (방향 일치 시만 가중)
         vol_ratio = indicators.get("volume_ratio", 1.0)
-        if vol_ratio > 2.0:
-            current_direction = 1 if sum(scores) > 0 else -1
-            scores.append(current_direction * 0.5)
+        if vol_ratio > 1.5 and total_weight > 0:
+            direction = 1 if weighted_score > 0 else -1
+            weighted_score += direction * min((vol_ratio - 1.5) * 0.1, 0.3)
 
-        if not scores:
+        if total_weight == 0:
             return SIGNAL_HOLD, 0.0
 
-        total = sum(scores)
-        max_possible = len(scores) * 2.0
-        normalized = total / max_possible
+        normalized = weighted_score / (total_weight * 2.0 + 1e-10)
+        # 다수결 일치 여부로 confidence 조정
+        agreeing = max(buy_votes, sell_votes)
+        agreement_bonus = (agreeing - 1) * 0.05  # 2개 일치 +0.05, 3개 일치 +0.10
 
-        if normalized > 0.5:
+        confidence = min(abs(normalized) + agreement_bonus, 1.0)
+
+        if normalized > 0.45:
             signal = SIGNAL_STRONG_BUY
-        elif normalized > 0.2:
+        elif normalized > 0.15:
             signal = SIGNAL_BUY
-        elif normalized < -0.5:
+        elif normalized < -0.45:
             signal = SIGNAL_STRONG_SELL
-        elif normalized < -0.2:
+        elif normalized < -0.15:
             signal = SIGNAL_SELL
         else:
             signal = SIGNAL_HOLD
 
-        confidence = min(abs(normalized), 1.0)
         return signal, round(confidence, 3)
 
     # ─── 목표가 / 손절가 ───────────────────────────────────

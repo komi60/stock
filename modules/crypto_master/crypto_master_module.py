@@ -141,84 +141,145 @@ class CryptoMasterModule(BaseModule):
     async def shutdown(self) -> None:
         logger.info("크립토 마스터 모듈 종료")
 
-    # ─── 매수 스캔 ────────────────────────────────────────
+    # ─── 매수 스캔 (AI 종목선정 기반) ───────────────────────
 
     async def _scan_buy_opportunities(self) -> tuple[int, int]:
-        """KRW 전체 마켓 스캔 → 통합 점수 계산 → 매수 실행.
+        """AI 선정 종목 우선 분석 → 통합 점수 계산 → 매수 실행.
+
+        흐름:
+        1. CryptoNewsModule에서 AI 선정 종목 가져오기 (최대 8~10개)
+        2. AI 선정 없으면 거래량 상위 10개로 폴백 (50→10 축소)
+        3. 선정된 종목에만 기술적 분석 실행
+        4. 통합 점수: AI신뢰도(40%) + 기술적(40%) + Fear&Greed(20%)
+        5. min_confidence 이상이면 매수
 
         Returns:
             (buy_count, checked_count)
         """
-        # 이미 보유 중인 마켓 제외
         held_markets = set(self._positions.keys())
-
-        # 배치로 현재가 조회 (100개씩)
         candidate_markets = [m for m in self._markets_cache if m not in held_markets]
+
+        # ① AI 선정 종목 조회
+        ai_picks = self._news.get_ai_selected_coins()
+        ai_picks_map: dict[str, float] = {}  # {market: confidence}
+
+        if ai_picks:
+            for pick in ai_picks:
+                mkt = pick.get("market", "")
+                conf = pick.get("confidence", 0.5)
+                if mkt in self._markets_cache and mkt not in held_markets:
+                    ai_picks_map[mkt] = conf
+            scan_markets = list(ai_picks_map.keys())
+            logger.info(f"AI 선정 종목 {len(scan_markets)}개 기술적 분석 시작")
+        else:
+            # ② 폴백: 거래량 상위 10개
+            fallback_n = self.config.get("modules", {}).get(
+                "crypto_master", {}
+            ).get("scan_top_n_fallback", 10)
+            scan_markets = await self._get_top_volume_markets(
+                candidate_markets, top_n=fallback_n
+            )
+            logger.info(f"AI 선정 없음. 거래량 상위 {len(scan_markets)}개 분석 (폴백)")
 
         buy_count = 0
         checked = 0
-
-        # 상위 거래량 코인만 분석 (전체를 다 분석하면 너무 오래 걸림)
-        top_markets = await self._get_top_volume_markets(candidate_markets, top_n=50)
-
-        # 각 코인 기술적 분석
         scored_markets = []
-        for market in top_markets:
+
+        # ③ 기술적 분석
+        for market in scan_markets:
             try:
                 tech_signal = await self._trading.analyze(market)
                 signal = tech_signal.get("signal", SIGNAL_HOLD)
+                checked += 1
 
-                # 매수 신호인 경우만 스코어 계산
+                # 매수 신호 아니면 스킵 (단, AI가 선정했으면 낮은 임계값 적용)
+                ai_conf = ai_picks_map.get(market, 0.0)
                 if signal not in (SIGNAL_BUY, SIGNAL_STRONG_BUY):
-                    checked += 1
-                    continue
+                    if ai_conf < 0.75:  # AI 신뢰도 75% 미만이면 기술 신호 없을 때 스킵
+                        continue
 
-                # 통합 점수 계산
-                total_score = self._calc_total_score(market, tech_signal)
+                total_score = self._calc_total_score_v2(market, tech_signal, ai_conf)
 
                 if total_score >= self._min_confidence:
-                    scored_markets.append((market, total_score, tech_signal))
+                    scored_markets.append((market, total_score, tech_signal, ai_conf))
 
-                checked += 1
             except Exception as e:
                 logger.debug(f"[{market}] 분석 오류: {e}")
 
-        # 점수 내림차순 정렬 → 상위 코인부터 매수
+        # ④ 점수 내림차순 정렬 → 상위부터 매수
         scored_markets.sort(key=lambda x: x[1], reverse=True)
 
-        for market, score, tech_signal in scored_markets:
+        for market, score, tech_signal, ai_conf in scored_markets:
             if len(self._positions) >= self._max_positions:
                 break
             try:
                 success = await self._execute_buy(market, score, tech_signal)
                 if success:
                     buy_count += 1
+                    # AI 선정 종목이면 선정 당시 가격 DB 업데이트
+                    if ai_conf > 0:
+                        await self._update_ai_selection_price(
+                            market, tech_signal.get("current_price", 0)
+                        )
             except Exception as e:
                 logger.error(f"[{market}] 매수 실행 오류: {e}")
 
         return buy_count, checked
 
-    def _calc_total_score(self, market: str, tech_signal: dict) -> float:
-        """기술적 분석 + 뉴스 감성 + Fear&Greed 통합 점수 (0~1).
+    def _calc_total_score_v2(
+        self, market: str, tech_signal: dict, ai_confidence: float = 0.0
+    ) -> float:
+        """AI신뢰도 + 기술적 분석 + Fear&Greed 통합 점수 (0~1).
 
         가중치:
-        - 기술적 분석: 50%
-        - 뉴스 감성: 30%
-        - Fear & Greed: 20%
+        - AI 종목선정 신뢰도: 40%
+        - 기술적 분석:       40%
+        - Fear & Greed:      20%
         """
-        # 기술적 점수: BUY 신호일 때 confidence 사용
+        # AI 신뢰도 점수 (없으면 뉴스 감성 점수로 대체)
+        if ai_confidence > 0:
+            ai_score = ai_confidence * 0.4
+        else:
+            news_score = self._news.get_coin_news_score(market)
+            ai_score = news_score * 0.4
+
+        # 기술적 점수
         tech_confidence = tech_signal.get("confidence", 0.0)
-        tech_score = tech_confidence * self._w_technical
+        signal = tech_signal.get("signal", SIGNAL_HOLD)
+        if signal in (SIGNAL_SELL, SIGNAL_STRONG_SELL):
+            tech_confidence = 0.0  # 매도 신호면 0점
+        tech_score = tech_confidence * 0.4
 
-        # 뉴스 점수 (0~1)
-        news_score = self._news.get_coin_news_score(market) * self._w_news
-
-        # Fear & Greed 점수 (0~100 → 0~1, 50 이상이면 긍정)
+        # Fear & Greed 점수 (0~100 → 0~1)
         fg_index = self._news.get_fear_greed_index()
-        fg_score = (fg_index / 100.0) * self._w_fear_greed
+        fg_score = (fg_index / 100.0) * 0.2
 
-        total = tech_score + news_score + fg_score
+        total = ai_score + tech_score + fg_score
         return round(min(total, 1.0), 3)
+
+    # 구버전 호환 (dashboard 등에서 참조할 수 있음)
+    def _calc_total_score(self, market: str, tech_signal: dict) -> float:
+        return self._calc_total_score_v2(market, tech_signal, ai_confidence=0.0)
+
+    async def _update_ai_selection_price(
+        self, market: str, price: float
+    ) -> None:
+        """AI 선정 종목 매수 시 선정 당시 가격을 DB에 업데이트."""
+        try:
+            db = await get_db()
+            await db.execute(
+                """UPDATE ai_selections
+                   SET price_at_selection = ?
+                   WHERE market = ?
+                     AND price_at_selection = 0
+                   ORDER BY selected_at DESC
+                   LIMIT 1""",
+                (price, market),
+            )
+            await db.commit()
+            await db.close()
+        except Exception as e:
+            logger.debug(f"AI 선정 가격 업데이트 오류: {e}")
 
     async def _get_top_volume_markets(
         self, markets: list[str], top_n: int = 50

@@ -23,6 +23,29 @@ async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.executescript("""
+            -- AI 종목선정 및 채널 신뢰도 테이블 --
+
+            CREATE TABLE IF NOT EXISTS ai_selections (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market TEXT NOT NULL,
+                reason TEXT,
+                confidence REAL DEFAULT 0,
+                news_summary TEXT,
+                fear_greed_index INTEGER DEFAULT 50,
+                price_at_selection REAL DEFAULT 0,
+                price_after_24h REAL,
+                result TEXT,
+                selected_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS channel_trust (
+                channel TEXT PRIMARY KEY,
+                trust_score REAL DEFAULT 0.5,
+                total_predictions INTEGER DEFAULT 0,
+                correct_predictions INTEGER DEFAULT 0,
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
             -- 암호화폐 자동매매 테이블 --
 
             CREATE TABLE IF NOT EXISTS crypto_news (
