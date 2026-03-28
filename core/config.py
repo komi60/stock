@@ -53,9 +53,9 @@ class GeminiConfig(BaseModel):
 
 
 class ClaudeConfig(BaseModel):
-    """Claude API 설정 (보조)."""
+    """Claude API 설정."""
     api_key: str = Field(default_factory=lambda: os.getenv("CLAUDE_API_KEY", ""))
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-haiku-4-5-20251001"
 
 
 class EmailConfig(BaseModel):

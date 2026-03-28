@@ -1,6 +1,6 @@
 """크립토 뉴스 분석 모듈.
 
-흐름: 뉴스수집 → 뉴스평가(Gemini) → AI 종목선정(Gemini) → 채널성과평가
+흐름: 뉴스수집 → 뉴스평가(AI) → AI 종목선정 → 채널성과평가
 30분 간격 실행, 24/7 운영.
 """
 
@@ -16,7 +16,7 @@ import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from ai.gemini_client import GeminiClient
+from ai.claude_client import ClaudeClient
 from core.base_module import BaseModule
 from core.database import get_db
 
@@ -49,9 +49,9 @@ FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1"
 class CryptoNewsModule(BaseModule):
     """암호화폐 뉴스 수집 → AI 분석 → 종목선정 모듈."""
 
-    def __init__(self, config: dict[str, Any], gemini: GeminiClient):
+    def __init__(self, config: dict[str, Any], ai: ClaudeClient):
         super().__init__("crypto_news", config)
-        self._gemini = gemini
+        self._ai = ai
         self._session: aiohttp.ClientSession | None = None
         self._latest_articles: list[dict] = []
         self._fear_greed_index: int = 50
@@ -97,8 +97,8 @@ class CryptoNewsModule(BaseModule):
             await self._save_articles(analyzed)
             logger.info(f"크립토 뉴스 평가 완료: {len(analyzed)}건")
 
-            # 3. Gemini AI 종목 선정
-            if self._gemini and self._gemini._client:
+            # 3. AI 종목 선정
+            if self._ai and self._ai._client:
                 await self._select_coins_with_ai(analyzed)
 
         # 4. 채널 성과 평가 (24시간 지난 예측 적중률 갱신)
@@ -196,7 +196,7 @@ class CryptoNewsModule(BaseModule):
     async def _analyze_articles(
         self, raw_articles: list[dict], channel_trust: dict[str, float]
     ) -> list[dict]:
-        """Gemini AI로 크립토 뉴스 감성 분석 (채널 신뢰도 반영)."""
+        """Claude AI로 크립토 뉴스 감성 분석 (채널 신뢰도 반영)."""
         analyzed = []
         for i in range(0, len(raw_articles), 10):
             batch = raw_articles[i : i + 10]
@@ -256,13 +256,13 @@ class CryptoNewsModule(BaseModule):
 4. summary: 한 문장 한국어 요약 (크립토 시장 관점에서)
 
 반드시 JSON 배열만 응답하세요."""
-        response = await self._gemini.analyze(articles_text, system_instruction)
-        return self._gemini._parse_json_response(response)
+        response = await self._ai.analyze(articles_text, system_instruction)
+        return self._ai._parse_json_response(response)
 
     # ─── AI 종목 선정 ──────────────────────────────────────
 
     async def _select_coins_with_ai(self, articles: list[dict]) -> None:
-        """Gemini가 뉴스 흐름 기반으로 투자 유망 종목 선정.
+        """Claude AI가 뉴스 흐름 기반으로 투자 유망 종목 선정.
 
         선정 결과를 self._ai_selections에 캐시하고 DB에 저장.
         """
@@ -321,8 +321,8 @@ KRW-MATIC, KRW-DOT, KRW-LINK, KRW-AVAX, KRW-ATOM, KRW-NEAR, KRW-SUI
 신뢰도(confidence)가 {min_confidence} 미만인 코인은 제외하세요.
 JSON 배열만 응답하세요."""
 
-            response = await self._gemini.analyze(news_text, system_instruction)
-            picks = self._gemini._parse_json_response(response)
+            response = await self._ai.analyze(news_text, system_instruction)
+            picks = self._ai._parse_json_response(response)
 
             # 필터링 및 정규화
             valid_picks = []
