@@ -1,6 +1,6 @@
 """Google Gemini API 클라이언트.
 
-google-genai SDK (최신) 사용.
+google-generativeai SDK (안정버전) 우선, google-genai SDK (최신) 폴백.
 """
 
 from __future__ import annotations
@@ -13,6 +13,27 @@ from loguru import logger
 
 from core.config import GeminiConfig
 
+# SDK 버전 감지
+_SDK_MODE = None  # "new" | "legacy"
+
+def _detect_sdk() -> str:
+    """설치된 Gemini SDK 종류 감지."""
+    try:
+        import google.generativeai  # noqa: F401
+        return "legacy"
+    except ImportError:
+        pass
+    try:
+        from google import genai  # noqa: F401
+        return "new"
+    except ImportError:
+        pass
+    raise ImportError(
+        "Gemini SDK 미설치. 다음 중 하나를 설치하세요:\n"
+        "  pip install google-generativeai\n"
+        "  pip install google-genai"
+    )
+
 
 class GeminiClient:
     """Gemini API를 이용한 AI 분석 클라이언트."""
@@ -20,19 +41,31 @@ class GeminiClient:
     def __init__(self, config: GeminiConfig):
         self.config = config
         self._client = None
+        self._sdk_mode: str | None = None
 
     async def initialize(self) -> None:
         """Gemini 클라이언트 초기화."""
         try:
-            from google import genai
+            self._sdk_mode = _detect_sdk()
 
-            self._client = genai.Client(api_key=self.config.api_key)
-            # 연결 테스트
-            resp = self._client.models.generate_content(
-                model=self.config.model,
-                contents="ping",
-            )
-            logger.info(f"Gemini 초기화 완료: {self.config.model}")
+            if self._sdk_mode == "legacy":
+                import google.generativeai as genai
+                genai.configure(api_key=self.config.api_key)
+                # GenerativeModel을 클라이언트로 사용
+                self._client = genai.GenerativeModel(self.config.model)
+                # 연결 테스트
+                await asyncio.to_thread(self._client.generate_content, "ping")
+            else:
+                from google import genai
+                self._client = genai.Client(api_key=self.config.api_key)
+                # 연결 테스트
+                await asyncio.to_thread(
+                    self._client.models.generate_content,
+                    model=self.config.model,
+                    contents="ping",
+                )
+
+            logger.info(f"Gemini 초기화 완료: {self.config.model} (SDK: {self._sdk_mode})")
         except Exception as e:
             logger.error(f"Gemini 초기화 실패: {e}")
             raise
@@ -45,11 +78,17 @@ class GeminiClient:
         full_prompt = f"{system_instruction}\n\n{prompt}" if system_instruction else prompt
 
         try:
-            response = await asyncio.to_thread(
-                self._client.models.generate_content,
-                model=self.config.model,
-                contents=full_prompt,
-            )
+            if self._sdk_mode == "legacy":
+                response = await asyncio.to_thread(
+                    self._client.generate_content,
+                    full_prompt,
+                )
+            else:
+                response = await asyncio.to_thread(
+                    self._client.models.generate_content,
+                    model=self.config.model,
+                    contents=full_prompt,
+                )
             return response.text
         except Exception as e:
             logger.error(f"Gemini API 호출 실패: {e}")
