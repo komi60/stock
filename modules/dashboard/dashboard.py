@@ -135,16 +135,29 @@ def create_dashboard(
 
     @app.get("/api/candidates")
     async def candidates():
+        """AI 선정 종목 조회 (ai_selections 테이블)."""
         try:
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
             cursor = await db.execute(
-                "SELECT * FROM stock_candidates WHERE date = ? ORDER BY total_score DESC", (today,))
+                """SELECT id, market, confidence, reason, news_summary,
+                          price_at_selection, price_after_24h, result, selected_at
+                   FROM ai_selections
+                   WHERE selected_at >= ?
+                   ORDER BY confidence DESC""",
+                (today,),
+            )
             rows = await cursor.fetchall()
             await db.close()
-            result = [{"ticker": r[2], "name": r[3], "total_score": r[4], "news_score": r[5],
-                        "sentiment_score": r[6], "policy_score": r[7], "technical_score": r[8], "signal": r[9]}
-                       for r in rows]
+            result = [
+                {
+                    "id": r[0], "market": r[1], "confidence": r[2],
+                    "reason": r[3], "news_summary": r[4],
+                    "price_at_selection": r[5], "price_after_24h": r[6],
+                    "result": r[7], "selected_at": r[8],
+                }
+                for r in rows
+            ]
             return {"date": today, "candidates": result}
         except Exception as e:
             return {"error": str(e)}
@@ -153,12 +166,19 @@ def create_dashboard(
     async def recent_orders():
         try:
             db = await get_db()
-            cursor = await db.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 50")
+            cursor = await db.execute(
+                "SELECT * FROM crypto_orders ORDER BY created_at DESC LIMIT 50"
+            )
             rows = await cursor.fetchall()
             await db.close()
-            orders = [{"id": r[0], "order_id": r[1], "ticker": r[2], "side": r[3], "order_type": r[4],
-                        "quantity": r[5], "price": r[6], "status": r[7], "filled_quantity": r[8],
-                        "filled_price": r[9], "created_at": r[10]} for r in rows]
+            orders = [
+                {
+                    "id": r[0], "market": r[1], "side": r[2], "volume": r[3],
+                    "price": r[4], "ord_type": r[5], "status": r[6],
+                    "uuid": r[7], "is_paper": r[8], "created_at": r[9],
+                }
+                for r in rows
+            ]
             return {"orders": orders}
         except Exception as e:
             return {"error": str(e)}
@@ -213,26 +233,23 @@ def create_dashboard(
         try:
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
-            c1 = await db.execute("SELECT COUNT(*) FROM news WHERE created_at >= ?", (today,))
+            c1 = await db.execute(
+                "SELECT COUNT(*) FROM crypto_news WHERE collected_at >= ?", (today,))
             news_today = (await c1.fetchone())[0]
-            c2 = await db.execute("SELECT COUNT(*) FROM news")
+            c2 = await db.execute("SELECT COUNT(*) FROM crypto_news")
             news_total = (await c2.fetchone())[0]
             c3 = await db.execute(
-                "SELECT sentiment, COUNT(*) FROM news WHERE sentiment != 'pending' GROUP BY sentiment")
+                "SELECT sentiment, COUNT(*) FROM crypto_news WHERE sentiment != 'pending' GROUP BY sentiment")
             sentiment_dist = {r[0]: r[1] for r in await c3.fetchall()}
-            c4 = await db.execute("SELECT COUNT(*) FROM rumors WHERE collected_at >= ?", (today,))
-            rumors_today = (await c4.fetchone())[0]
-            c5 = await db.execute("SELECT COUNT(*) FROM rumors")
-            rumors_total = (await c5.fetchone())[0]
-            c6 = await db.execute("SELECT COUNT(*) FROM orders WHERE created_at >= ?", (today,))
-            orders_today = (await c6.fetchone())[0]
-            c7 = await db.execute(
-                "SELECT COUNT(*) FROM stock_candidates WHERE date = ?", (today,))
-            candidates_today = (await c7.fetchone())[0]
+            c4 = await db.execute(
+                "SELECT COUNT(*) FROM crypto_orders WHERE created_at >= ?", (today,))
+            orders_today = (await c4.fetchone())[0]
+            c5 = await db.execute(
+                "SELECT COUNT(*) FROM ai_selections WHERE selected_at >= ?", (today,))
+            candidates_today = (await c5.fetchone())[0]
             await db.close()
             return {
                 "news_today": news_today, "news_total": news_total,
-                "rumors_today": rumors_today, "rumors_total": rumors_total,
                 "orders_today": orders_today, "candidates_today": candidates_today,
                 "sentiment_distribution": sentiment_dist,
             }

@@ -18,7 +18,7 @@ KST = pytz.timezone("Asia/Seoul")
 
 
 class TradingScheduler:
-    """KRX 시장 시간 기반 스케줄러."""
+    """암호화폐 자동매매 스케줄러 (24/7 운영)."""
 
     def __init__(self, settings: dict[str, Any]):
         self._scheduler = AsyncIOScheduler(timezone=KST)

@@ -541,7 +541,7 @@ class CryptoMasterModule(BaseModule):
                 market = f"KRW-{currency}"
                 # 유효한 KRW 마켓인지 확인 (상장폐지/미지원 코인 제외)
                 if self._markets_cache and market not in self._markets_cache:
-                    logger.warning(f"유효하지 않은 마켓 건너뜀: {market}")
+                    logger.debug(f"상장폐지/미지원 코인 건너뜀: {market}")
                     continue
                 self._positions[market] = {
                     "market": market,

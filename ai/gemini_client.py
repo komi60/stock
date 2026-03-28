@@ -127,18 +127,18 @@ class GeminiClient:
             for a in articles[:10]
         )
 
-        system_instruction = """당신은 한국 주식시장 전문 분석가입니다.
+        system_instruction = """당신은 암호화폐 시장 전문 분석가입니다.
 다음 뉴스 기사들을 분석하여 JSON 배열로 응답하세요.
 국내 뉴스와 해외(영문) 뉴스가 혼재할 수 있습니다.
-해외 뉴스는 한국 시장(KOSPI/KOSDAQ)에 미치는 간접 영향을 분석하세요.
-예: 미국 반도체 호재 → 삼성전자(005930)/SK하이닉스(000660) 수혜,
-   유가 급등 → 정유주(010950,096770) 수혜/항공주(003490) 악재,
-   연준 금리 동결 → 성장주 전반 호재 등.
+각 뉴스가 암호화폐 시장(BTC, ETH, 알트코인 등)에 미치는 영향을 분석하세요.
+예: 미국 ETF 승인 → BTC/ETH 상승 호재,
+   연준 금리 인상 → 위험자산 전반 악재,
+   특정 코인 해킹 사고 → 해당 코인 악재/시장 전체 위축 등.
 
 각 기사에 대해:
 1. sentiment: "very_positive", "positive", "neutral", "negative", "very_negative"
-2. impact_score: -1.0 ~ 1.0 (한국 시장에 미치는 영향력)
-3. related_tickers: 영향받는 한국 종목코드 배열 (예: ["005930", "000660"])
+2. impact_score: -1.0 ~ 1.0 (암호화폐 시장에 미치는 영향력)
+3. related_tickers: 영향받는 암호화폐 심볼 배열 (예: ["BTC", "ETH", "SOL"])
 4. summary: 한 문장 한국어 요약
 
 반드시 JSON 배열만 응답하세요. 다른 텍스트 없이."""
@@ -152,13 +152,13 @@ class GeminiClient:
 
     async def analyze_rumor(self, rumor_text: str, source: str) -> dict:
         """루머 진위/파급력 분석."""
-        system_instruction = """당신은 한국 주식시장 루머 분석 전문가입니다.
-다음 루머를 분석하여 JSON으로 응답하세요:
+        system_instruction = """당신은 암호화폐 시장 분석 전문가입니다.
+다음 정보를 분석하여 JSON으로 응답하세요:
 
 1. credibility: 0.0 ~ 1.0 (신뢰도)
 2. sentiment: "very_positive", "positive", "neutral", "negative", "very_negative"
-3. impact_score: -1.0 ~ 1.0 (시장 영향력)
-4. related_tickers: 관련 종목코드 배열
+3. impact_score: -1.0 ~ 1.0 (암호화폐 시장 영향력)
+4. related_tickers: 관련 암호화폐 심볼 배열 (예: ["BTC", "ETH"])
 5. analysis: 한 문장 분석
 
 JSON만 응답하세요."""
