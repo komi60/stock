@@ -79,28 +79,36 @@ class GeminiClient:
             raise
 
     async def analyze(self, prompt: str, system_instruction: str = "") -> str:
-        """텍스트 분석 요청."""
+        """텍스트 분석 요청. 429 발생 시 최대 3회 재시도."""
         if not self._client:
             await self.initialize()
 
         full_prompt = f"{system_instruction}\n\n{prompt}" if system_instruction else prompt
 
-        try:
-            if self._sdk_mode == "new":
-                response = await asyncio.to_thread(
-                    self._client.models.generate_content,
-                    model=self.config.model,
-                    contents=full_prompt,
-                )
-            else:
-                response = await asyncio.to_thread(
-                    self._client.generate_content,
-                    full_prompt,
-                )
-            return response.text
-        except Exception as e:
-            logger.error(f"Gemini API 호출 실패: {e}")
-            raise
+        wait_times = [5, 15, 30]
+        for attempt, wait in enumerate(wait_times + [None], start=1):
+            try:
+                if self._sdk_mode == "new":
+                    response = await asyncio.to_thread(
+                        self._client.models.generate_content,
+                        model=self.config.model,
+                        contents=full_prompt,
+                    )
+                else:
+                    response = await asyncio.to_thread(
+                        self._client.generate_content,
+                        full_prompt,
+                    )
+                return response.text
+            except Exception as e:
+                err_str = str(e)
+                is_rate_limit = "429" in err_str or "quota" in err_str.lower() or "rate" in err_str.lower()
+                if is_rate_limit and wait is not None:
+                    logger.warning(f"Gemini 한도 초과 (시도 {attempt}/3), {wait}초 후 재시도...")
+                    await asyncio.sleep(wait)
+                else:
+                    logger.error(f"Gemini API 호출 실패: {e}")
+                    raise
 
     def _parse_json_response(self, text: str) -> Any:
         """AI 응답에서 JSON 파싱 (코드블록 제거)."""

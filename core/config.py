@@ -49,7 +49,7 @@ def _load_vault_to_env() -> None:
 class GeminiConfig(BaseModel):
     """Gemini API 설정."""
     api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-2.0-flash-lite"
 
 
 class ClaudeConfig(BaseModel):

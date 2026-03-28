@@ -16,7 +16,7 @@ import feedparser
 from bs4 import BeautifulSoup
 from loguru import logger
 
-from ai.claude_client import ClaudeClient
+from ai.gemini_client import GeminiClient
 from core.base_module import BaseModule
 from core.database import get_db
 
@@ -49,9 +49,9 @@ FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1"
 class CryptoNewsModule(BaseModule):
     """암호화폐 뉴스 수집 → AI 분석 → 종목선정 모듈."""
 
-    def __init__(self, config: dict[str, Any], ai: ClaudeClient):
+    def __init__(self, config: dict[str, Any], gemini: GeminiClient):
         super().__init__("crypto_news", config)
-        self._ai = ai
+        self._gemini = gemini
         self._session: aiohttp.ClientSession | None = None
         self._latest_articles: list[dict] = []
         self._fear_greed_index: int = 50
@@ -98,7 +98,7 @@ class CryptoNewsModule(BaseModule):
             logger.info(f"크립토 뉴스 평가 완료: {len(analyzed)}건")
 
             # 3. AI 종목 선정
-            if self._ai and self._ai._client:
+            if self._gemini and self._gemini._client:
                 await self._select_coins_with_ai(analyzed)
 
         # 4. 채널 성과 평가 (24시간 지난 예측 적중률 갱신)
@@ -256,8 +256,8 @@ class CryptoNewsModule(BaseModule):
 4. summary: 한 문장 한국어 요약 (크립토 시장 관점에서)
 
 반드시 JSON 배열만 응답하세요."""
-        response = await self._ai.analyze(articles_text, system_instruction)
-        return self._ai._parse_json_response(response)
+        response = await self._gemini.analyze(articles_text, system_instruction)
+        return self._gemini._parse_json_response(response)
 
     # ─── AI 종목 선정 ──────────────────────────────────────
 
@@ -321,8 +321,8 @@ KRW-MATIC, KRW-DOT, KRW-LINK, KRW-AVAX, KRW-ATOM, KRW-NEAR, KRW-SUI
 신뢰도(confidence)가 {min_confidence} 미만인 코인은 제외하세요.
 JSON 배열만 응답하세요."""
 
-            response = await self._ai.analyze(news_text, system_instruction)
-            picks = self._ai._parse_json_response(response)
+            response = await self._gemini.analyze(news_text, system_instruction)
+            picks = self._gemini._parse_json_response(response)
 
             # 필터링 및 정규화
             valid_picks = []

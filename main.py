@@ -24,7 +24,7 @@ from core.logger import setup_logger
 from core.base_module import PluginRegistry
 from core.scheduler import TradingScheduler
 
-from ai.claude_client import ClaudeClient
+from ai.gemini_client import GeminiClient
 
 # 암호화폐 자동매매 모듈
 from broker.upbit_api import UpbitClient
@@ -41,7 +41,7 @@ class AutoTraderApp:
         self._config: AppConfig | None = None
         self._registry = PluginRegistry()
         self._scheduler: TradingScheduler | None = None
-        self._claude: ClaudeClient | None = None
+        self._gemini: GeminiClient | None = None
         self._upbit: UpbitClient | None = None
         self._crypto_master: CryptoMasterModule | None = None
         self._shutdown_event = asyncio.Event()
@@ -107,12 +107,12 @@ class AutoTraderApp:
 
     async def _init_external_services(self) -> None:
         """외부 서비스 (브로커 API, AI) 초기화."""
-        # Claude AI
-        self._claude = ClaudeClient(self._config.claude)
+        # Gemini AI
+        self._gemini = GeminiClient(self._config.gemini)
         try:
-            await self._claude.initialize()
+            await self._gemini.initialize()
         except Exception as e:
-            logger.error(f"Claude AI 초기화 실패: {e}")
+            logger.error(f"Gemini AI 초기화 실패: {e}")
 
         # 업비트 API
         import os
@@ -139,7 +139,7 @@ class AutoTraderApp:
         # 크립토 뉴스 모듈
         crypto_news = CryptoNewsModule(
             config=crypto_modules_cfg.get("crypto_news", {}),
-            ai=self._claude,
+            gemini=self._gemini,
         )
         self._registry.register(crypto_news)
 
