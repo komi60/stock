@@ -584,12 +584,8 @@ function updateClock(){
     document.getElementById('kstClock').textContent=h+':'+m+':'+s;
     var days=['일','월','화','수','목','금','토'];
     document.getElementById('kstDate').textContent=(now.getMonth()+1)+'/'+now.getDate()+' ('+days[now.getDay()]+')';
-    var day=now.getDay(),mins=now.getHours()*60+now.getMinutes(),el=document.getElementById('mktCd');
-    if(day>=1&&day<=5){
-        if(mins<540){var d=540-mins;el.textContent='장 시작까지 '+Math.floor(d/60)+'h '+d%60+'m';el.className='mkt-cd closed';}
-        else if(mins<=930){var d=930-mins;el.textContent='장 마감까지 '+Math.floor(d/60)+'h '+d%60+'m';el.className='mkt-cd open';}
-        else{el.textContent='장 마감';el.className='mkt-cd closed';}
-    }else{el.textContent='주말 휴장';el.className='mkt-cd closed';}
+    var el=document.getElementById('mktCd');
+    el.textContent='업비트 운영중';el.className='mkt-cd open';
 }
 setInterval(updateClock,1000);updateClock();
 """
