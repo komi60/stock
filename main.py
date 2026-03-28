@@ -240,10 +240,13 @@ async def main():
         logger.info(f"종료 시그널 수신: {sig}")
         app._shutdown_event.set()
 
-    for sig in (signal.SIGINT, signal.SIGTERM):
+    sigs = [signal.SIGINT]
+    if hasattr(signal, "SIGTERM"):  # Windows에는 SIGTERM 없음
+        sigs.append(signal.SIGTERM)
+    for sig in sigs:
         try:
             loop.add_signal_handler(sig, lambda s=sig: handle_shutdown(s))
-        except NotImplementedError:
+        except (NotImplementedError, OSError):
             signal.signal(sig, lambda s, f: handle_shutdown(s))
 
     try:
