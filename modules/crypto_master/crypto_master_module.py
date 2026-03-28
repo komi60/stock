@@ -270,10 +270,13 @@ class CryptoMasterModule(BaseModule):
             await db.execute(
                 """UPDATE ai_selections
                    SET price_at_selection = ?
-                   WHERE market = ?
-                     AND price_at_selection = 0
-                   ORDER BY selected_at DESC
-                   LIMIT 1""",
+                   WHERE id = (
+                       SELECT id FROM ai_selections
+                       WHERE market = ?
+                         AND price_at_selection = 0
+                       ORDER BY selected_at DESC
+                       LIMIT 1
+                   )""",
                 (price, market),
             )
             await db.commit()
