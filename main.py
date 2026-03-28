@@ -238,7 +238,6 @@ async def main():
 
     def handle_shutdown(sig):
         logger.info(f"종료 시그널 수신: {sig}")
-        asyncio.create_task(app.stop())
         app._shutdown_event.set()
 
     for sig in (signal.SIGINT, signal.SIGTERM):
