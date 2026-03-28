@@ -76,6 +76,9 @@ class AutoTraderApp:
         self._setup_scheduler(settings)
         self._scheduler.start()
 
+        # 시작 즉시 뉴스 수집 1회 실행 (30분 대기 없이 바로 시작)
+        asyncio.create_task(self._crypto_news_collect())
+
         # 7. 대시보드 서버 시작 (별도 스레드)
         self._start_dashboard(settings)
 
@@ -173,6 +176,8 @@ class AutoTraderApp:
             crypto_news = self._registry.get("crypto_news")
             if crypto_news:
                 await crypto_news.safe_execute()
+
+        self._crypto_news_collect = crypto_news_collect  # 즉시 실행용 참조 보관
 
         crypto_news_interval = (
             settings.get("crypto", {})

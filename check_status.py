@@ -120,16 +120,26 @@ def check_db():
 
     # 채널 신뢰도
     print("\n  📊 채널 신뢰도:")
-    rows = db.execute(
-        "SELECT channel, trust_score, total_predictions, correct_predictions "
-        "FROM channel_trust ORDER BY trust_score DESC"
-    ).fetchall()
-    if rows:
-        for r in rows:
-            hit_rate = f"{r[3]}/{r[2]}" if r[2] > 0 else "0/0"
-            print(f"    {r[0]:<20} trust={r[1]:.2f} | 적중 {hit_rate}")
-    else:
-        print("    (아직 없음)")
+    try:
+        rows = db.execute(
+            "SELECT channel, trust_score, total_predictions, correct_predictions "
+            "FROM channel_trust ORDER BY trust_score DESC"
+        ).fetchall()
+        if rows:
+            for r in rows:
+                hit_rate = f"{r[3]}/{r[2]}" if r[2] > 0 else "0/0"
+                print(f"    {r[0]:<20} trust={r[1]:.2f} | 적중 {hit_rate}")
+        else:
+            print("    (아직 없음)")
+    except Exception:
+        # 구버전 DB: total_predictions 컬럼 없을 수 있음 (재시작 후 자동 마이그레이션)
+        rows = db.execute(
+            "SELECT channel, trust_score FROM channel_trust ORDER BY trust_score DESC"
+        ).fetchall()
+        if rows:
+            for r in rows:
+                print(f"    {r[0]:<20} trust={r[1]:.2f}")
+        print("    ⚠️  DB 재시작 후 컬럼 마이그레이션 필요 (python main.py 재실행)")
 
     # 주문
     order_total = db.execute("SELECT COUNT(*) FROM crypto_orders").fetchone()[0]

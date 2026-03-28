@@ -116,4 +116,19 @@ async def init_db() -> None:
             );
         """)
         await db.commit()
+
+        # channel_trust 컬럼 마이그레이션 (구버전 DB 호환)
+        for col, definition in [
+            ("total_predictions", "INTEGER DEFAULT 0"),
+            ("correct_predictions", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                await db.execute(
+                    f"ALTER TABLE channel_trust ADD COLUMN {col} {definition}"
+                )
+                await db.commit()
+                logger.info(f"channel_trust 컬럼 추가: {col}")
+            except Exception:
+                pass  # 이미 존재하면 무시
+
         logger.info("데이터베이스 초기화 완료")
