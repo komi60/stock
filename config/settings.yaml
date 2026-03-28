@@ -34,10 +34,24 @@ crypto:
       interval_minutes: 30
       max_articles_per_source: 30
       sources:
+        # 크립토 전문 (영문)
         - "coindesk"
         - "cointelegraph"
-        - "coindesk_kr"
         - "decrypt"
+        - "cryptonews"
+        - "theblock"
+        - "bitcoinmagazine"
+        - "beincrypto"
+        # 미국 경제·금융
+        - "cnbc"
+        - "reuters_business"
+        - "reuters_world"
+        # 미국 정치 (규제·정책)
+        - "thehill"
+        - "politico"
+        # 한국어 크립토
+        - "coindesk_kr"
+        - "coindesk_korea"
       ai_selection:
         enabled: true
         max_picks: 8          # AI가 선정할 최대 종목 수

@@ -23,12 +23,24 @@ from core.database import get_db
 
 # 글로벌 크립토 뉴스 RSS 피드
 CRYPTO_RSS_FEEDS = [
+    # ─── 크립토 전문 (영문) ───────────────────────────────
     ("https://www.coindesk.com/arc/outboundfeeds/rss/", "coindesk"),
     ("https://cointelegraph.com/rss", "cointelegraph"),
     ("https://decrypt.co/feed", "decrypt"),
+    ("https://cryptonews.com/news/feed/", "cryptonews"),
+    ("https://www.theblock.co/rss.xml", "theblock"),
+    ("https://bitcoinmagazine.com/feed", "bitcoinmagazine"),
+    ("https://beincrypto.com/feed/", "beincrypto"),
+    # ─── 미국 경제·금융 뉴스 ─────────────────────────────
+    ("https://www.cnbc.com/id/10001147/device/rss/rss.html", "cnbc"),       # CNBC Finance
+    ("https://feeds.reuters.com/reuters/businessNews", "reuters_business"),  # Reuters Business
+    ("https://feeds.reuters.com/Reuters/worldNews", "reuters_world"),        # Reuters World (정치)
+    # ─── 미국 정치 뉴스 (SEC/규제/정부 정책) ─────────────
+    ("https://thehill.com/feed/", "thehill"),               # The Hill (정치/규제)
+    ("https://www.politico.com/rss/politics08.xml", "politico"),  # Politico
+    # ─── 한국어 크립토 뉴스 ──────────────────────────────
     ("https://coindesk.co.kr/feed/", "coindesk_kr"),
     ("https://www.coindeskkorea.com/feed/", "coindesk_korea"),
-    ("https://cryptonews.com/news/feed/", "cryptonews"),
 ]
 
 FEAR_GREED_URL = "https://api.alternative.me/fng/?limit=1"
@@ -225,14 +237,23 @@ class CryptoNewsModule(BaseModule):
             f"제목: {a['title']}\n내용: {a.get('content', '')[:400]}"
             for a in articles
         )
-        system_instruction = """당신은 암호화폐 시장 전문 분석가입니다.
-다음 크립토 뉴스 기사들을 분석하여 JSON 배열로 응답하세요.
+        system_instruction = """당신은 글로벌 암호화폐 시장 전문 분석가입니다.
+다음 뉴스 기사들을 분석하여 JSON 배열로 응답하세요.
+크립토 전문 뉴스뿐 아니라 미국 정치·경제 뉴스도 포함될 수 있습니다.
+
+간접 영향 판단 기준:
+- 미국 SEC/CFTC 규제 뉴스 → 크립토 시장 직접 영향
+- 트럼프/의회 친크립토 정책 → BTC/ETH 등 강한 호재
+- 미국 금리·CPI·경기 지표 → 위험자산(크립토) 방향성
+- 지정학적 리스크(전쟁/제재) → 비트코인 안전자산 수요
+- 기업 ETF/채택 뉴스 → 해당 코인 직접 호재
+- 해킹/사기/거래소 문제 → 시장 악재
 
 각 기사에 대해:
 1. sentiment: "very_positive", "positive", "neutral", "negative", "very_negative"
 2. impact_score: -1.0 ~ 1.0 (암호화폐 시장 전반에 미치는 영향)
-3. related_coins: 관련 코인 심볼 배열 (예: ["BTC", "ETH", "SOL"])
-4. summary: 한 문장 한국어 요약
+3. related_coins: 영향받는 코인 심볼 배열 (예: ["BTC", "ETH", "SOL"]), 전체 시장이면 ["BTC"]
+4. summary: 한 문장 한국어 요약 (크립토 시장 관점에서)
 
 반드시 JSON 배열만 응답하세요."""
         response = await self._gemini.analyze(articles_text, system_instruction)
@@ -270,11 +291,18 @@ class CryptoNewsModule(BaseModule):
                 for a in positive_articles
             )
 
-            system_instruction = f"""당신은 암호화폐 투자 전문가입니다.
+            system_instruction = f"""당신은 글로벌 거시경제와 암호화폐 시장을 통합 분석하는 투자 전문가입니다.
 현재 Fear & Greed Index: {self._fear_greed_index} ({self._fear_greed_label})
 
 아래 뉴스들을 종합 분석하여 향후 24시간 내 상승 가능성이 가장 높은 코인을
 최대 {max_picks}개 선정하세요.
+
+분석 시 고려사항:
+- 미국 정치(트럼프 정책, 친크립토 법안 등) → 시장 전체 방향성
+- 미국 Fed 금리·경제지표 → 위험자산 매수/매도 심리
+- SEC/CFTC 규제 결정 → 직접적 코인 영향
+- 특정 코인 개발/파트너십/ETF 뉴스 → 해당 코인 개별 모멘텀
+- 글로벌 지정학적 이벤트 → 비트코인 안전자산 수요
 
 반드시 업비트 KRW 마켓에서 거래 가능한 코인(KRW-XXX 형식)만 선정하세요.
 주요 코인 예: KRW-BTC, KRW-ETH, KRW-XRP, KRW-SOL, KRW-ADA, KRW-DOGE,
@@ -285,7 +313,7 @@ KRW-MATIC, KRW-DOT, KRW-LINK, KRW-AVAX, KRW-ATOM, KRW-NEAR, KRW-SUI
   {{
     "market": "KRW-BTC",
     "confidence": 0.85,
-    "reason": "선정 이유 (한국어 2~3문장)",
+    "reason": "선정 이유 (한국어 2~3문장, 미국 정치·경제 영향 포함)",
     "news_summary": "관련 뉴스 핵심 요약"
   }}
 ]
