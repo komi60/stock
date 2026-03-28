@@ -234,7 +234,7 @@ def create_dashboard(
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
             c1 = await db.execute(
-                "SELECT COUNT(*) FROM crypto_news WHERE collected_at >= ?", (today,))
+                "SELECT COUNT(*) FROM crypto_news WHERE created_at >= ?", (today,))
             news_today = (await c1.fetchone())[0]
             c2 = await db.execute("SELECT COUNT(*) FROM crypto_news")
             news_total = (await c2.fetchone())[0]

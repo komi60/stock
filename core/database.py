@@ -23,6 +23,15 @@ async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.executescript("""
+            -- 구버전 주식 트레이딩 테이블 제거 --
+            DROP TABLE IF EXISTS news;
+            DROP TABLE IF EXISTS rumors;
+            DROP TABLE IF EXISTS policy_events;
+            DROP TABLE IF EXISTS orders;
+            DROP TABLE IF EXISTS positions;
+            DROP TABLE IF EXISTS daily_reports;
+            DROP TABLE IF EXISTS stock_candidates;
+
             -- AI 종목선정 및 채널 신뢰도 테이블 --
 
             CREATE TABLE IF NOT EXISTS ai_selections (
