@@ -31,7 +31,11 @@ def _derive_machine_key() -> bytes:
     Fernet 호환 32바이트 키(Base64 URL-safe) 생성.
     → 같은 PC, 같은 사용자에서만 복호화 가능.
     """
-    machine_id = f"{platform.node()}:{os.getlogin()}:KR_STOCK_AUTOTRADER_v1"
+    try:
+        username = os.getlogin()
+    except OSError:
+        username = os.environ.get("USER", os.environ.get("USERNAME", "default"))
+    machine_id = f"{platform.node()}:{username}:KR_STOCK_AUTOTRADER_v1"
     digest = hashlib.sha256(machine_id.encode("utf-8")).digest()
     return base64.urlsafe_b64encode(digest)
 
@@ -84,14 +88,13 @@ class SecureVault:
 
     def has_keys(self) -> bool:
         """필수 키가 모두 설정되었는지 확인."""
-        required = ["KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO", "GEMINI_API_KEY"]
+        required = ["UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY", "GEMINI_API_KEY"]
         return all(bool(self._data.get(k)) for k in required)
 
     def get_status(self) -> dict[str, str]:
         """각 키의 설정 상태 (마스킹)."""
         all_keys = [
-            "KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO",
-            "KIS_ACCOUNT_PROD_CODE", "KIS_IS_PAPER",
+            "UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY",
             "GEMINI_API_KEY", "CLAUDE_API_KEY",
             "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
         ]

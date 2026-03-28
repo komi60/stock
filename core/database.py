@@ -23,107 +23,112 @@ async def init_db() -> None:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
     async with aiosqlite.connect(str(DB_PATH)) as db:
         await db.executescript("""
-            CREATE TABLE IF NOT EXISTS news (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                content TEXT,
-                source TEXT,
-                url TEXT UNIQUE,
-                published_at TEXT,
-                sentiment TEXT,
-                impact_score REAL DEFAULT 0,
-                related_tickers TEXT,
-                ai_summary TEXT,
-                created_at TEXT DEFAULT (datetime('now', 'localtime'))
-            );
+            -- 구버전 주식 트레이딩 테이블 제거 --
+            DROP TABLE IF EXISTS news;
+            DROP TABLE IF EXISTS rumors;
+            DROP TABLE IF EXISTS policy_events;
+            DROP TABLE IF EXISTS orders;
+            DROP TABLE IF EXISTS positions;
+            DROP TABLE IF EXISTS daily_reports;
+            DROP TABLE IF EXISTS stock_candidates;
 
-            CREATE TABLE IF NOT EXISTS rumors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                content TEXT NOT NULL,
-                source_channel TEXT,
-                channel_trust_score REAL DEFAULT 0.5,
-                sentiment TEXT,
-                impact_score REAL DEFAULT 0,
-                related_tickers TEXT,
-                verified INTEGER,
-                collected_at TEXT DEFAULT (datetime('now', 'localtime'))
-            );
+            -- AI 종목선정 및 채널 신뢰도 테이블 --
 
-            CREATE TABLE IF NOT EXISTS policy_events (
+            CREATE TABLE IF NOT EXISTS ai_selections (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                content TEXT,
-                source TEXT,
-                event_type TEXT,
-                published_at TEXT,
-                impact_score REAL DEFAULT 0,
-                beneficiary_sectors TEXT,
-                affected_tickers TEXT,
-                ai_analysis TEXT,
-                created_at TEXT DEFAULT (datetime('now', 'localtime'))
-            );
-
-            CREATE TABLE IF NOT EXISTS orders (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                order_id TEXT,
-                ticker TEXT NOT NULL,
-                side TEXT NOT NULL,
-                order_type TEXT DEFAULT 'limit',
-                quantity INTEGER NOT NULL,
-                price REAL,
-                status TEXT DEFAULT 'pending',
-                filled_quantity INTEGER DEFAULT 0,
-                filled_price REAL,
-                created_at TEXT DEFAULT (datetime('now', 'localtime')),
-                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
-            );
-
-            CREATE TABLE IF NOT EXISTS positions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                ticker TEXT NOT NULL,
-                name TEXT,
-                quantity INTEGER NOT NULL,
-                avg_price REAL NOT NULL,
-                current_price REAL DEFAULT 0,
-                opened_at TEXT DEFAULT (datetime('now', 'localtime')),
-                closed_at TEXT
-            );
-
-            CREATE TABLE IF NOT EXISTS daily_reports (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT UNIQUE NOT NULL,
-                total_trades INTEGER DEFAULT 0,
-                winning_trades INTEGER DEFAULT 0,
-                losing_trades INTEGER DEFAULT 0,
-                total_pnl REAL DEFAULT 0,
-                total_pnl_pct REAL DEFAULT 0,
-                max_drawdown_pct REAL DEFAULT 0,
-                module_reports TEXT,
-                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+                market TEXT NOT NULL,
+                reason TEXT,
+                confidence REAL DEFAULT 0,
+                news_summary TEXT,
+                fear_greed_index INTEGER DEFAULT 50,
+                price_at_selection REAL DEFAULT 0,
+                price_after_24h REAL,
+                result TEXT,
+                selected_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
             CREATE TABLE IF NOT EXISTS channel_trust (
                 channel TEXT PRIMARY KEY,
                 trust_score REAL DEFAULT 0.5,
-                total_rumors INTEGER DEFAULT 0,
-                accurate_rumors INTEGER DEFAULT 0,
+                total_predictions INTEGER DEFAULT 0,
+                correct_predictions INTEGER DEFAULT 0,
                 updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
 
-            CREATE TABLE IF NOT EXISTS stock_candidates (
+            -- 암호화폐 자동매매 테이블 --
+
+            CREATE TABLE IF NOT EXISTS crypto_news (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                date TEXT NOT NULL,
-                ticker TEXT NOT NULL,
-                name TEXT,
-                total_score REAL DEFAULT 0,
-                news_score REAL DEFAULT 0,
-                sentiment_score REAL DEFAULT 0,
-                policy_score REAL DEFAULT 0,
-                technical_score REAL DEFAULT 0,
-                signal TEXT,
-                reasons TEXT,
+                title TEXT NOT NULL,
+                content TEXT,
+                source TEXT,
+                url TEXT UNIQUE,
+                sentiment TEXT,
+                impact_score REAL DEFAULT 0,
+                related_coins TEXT,
+                ai_summary TEXT,
+                published_at TEXT,
                 created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS crypto_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market TEXT NOT NULL,
+                signal TEXT NOT NULL,
+                confidence REAL DEFAULT 0,
+                rsi REAL,
+                macd REAL,
+                bb_position REAL,
+                atr REAL,
+                ema_trend TEXT,
+                fear_greed_index INTEGER,
+                news_score REAL DEFAULT 0,
+                total_score REAL DEFAULT 0,
+                created_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS crypto_orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market TEXT NOT NULL,
+                side TEXT NOT NULL,
+                volume REAL,
+                price REAL,
+                ord_type TEXT DEFAULT 'limit',
+                status TEXT DEFAULT 'pending',
+                uuid TEXT,
+                is_paper INTEGER DEFAULT 1,
+                created_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
+            );
+
+            CREATE TABLE IF NOT EXISTS crypto_positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                market TEXT UNIQUE NOT NULL,
+                volume REAL NOT NULL,
+                avg_price REAL NOT NULL,
+                current_price REAL DEFAULT 0,
+                pnl_pct REAL DEFAULT 0,
+                stop_loss_price REAL,
+                take_profit_price REAL,
+                is_paper INTEGER DEFAULT 1,
+                opened_at TEXT DEFAULT (datetime('now', 'localtime')),
+                updated_at TEXT DEFAULT (datetime('now', 'localtime'))
             );
         """)
         await db.commit()
+
+        # channel_trust 컬럼 마이그레이션 (구버전 DB 호환)
+        for col, definition in [
+            ("total_predictions", "INTEGER DEFAULT 0"),
+            ("correct_predictions", "INTEGER DEFAULT 0"),
+        ]:
+            try:
+                await db.execute(
+                    f"ALTER TABLE channel_trust ADD COLUMN {col} {definition}"
+                )
+                await db.commit()
+                logger.info(f"channel_trust 컬럼 추가: {col}")
+            except Exception:
+                pass  # 이미 존재하면 무시
+
         logger.info("데이터베이스 초기화 완료")

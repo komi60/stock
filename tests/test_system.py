@@ -30,7 +30,7 @@ async def run_tests():
                format="<green>{time:HH:mm:ss}</green> | <level>{level:<7}</level> | <level>{message}</level>")
 
     logger.info("=" * 60)
-    logger.info("  KR Stock AutoTrader - 시스템 테스트 시작")
+    logger.info("  Upbit Crypto AutoTrader - 시스템 테스트 시작")
     logger.info("=" * 60)
 
     passed = 0
@@ -38,7 +38,7 @@ async def run_tests():
 
     # ─── 1. Core 모듈 테스트 ───────────────────────────────
 
-    logger.info("\n📦 [1/7] Core 모듈 테스트")
+    logger.info("\n📦 [1/5] Core 모듈 테스트")
 
     # 설정 로드
     try:
@@ -120,8 +120,7 @@ async def run_tests():
         await db.close()
 
         expected_tables = [
-            "news", "rumors", "policy_events", "orders",
-            "positions", "daily_reports", "channel_trust", "stock_candidates",
+            "crypto_news", "crypto_signals", "crypto_orders", "crypto_positions",
         ]
         for t in expected_tables:
             assert t in tables, f"테이블 누락: {t}"
@@ -134,7 +133,7 @@ async def run_tests():
 
     # ─── 2. BaseModule / PluginRegistry 테스트 ─────────────
 
-    logger.info("\n🔌 [2/7] 플러그인 아키텍처 테스트")
+    logger.info("\n🔌 [2/5] 플러그인 아키텍처 테스트")
 
     try:
         from core.base_module import BaseModule, DataProviderModule, PluginRegistry
@@ -196,7 +195,7 @@ async def run_tests():
 
     # ─── 3. 스케줄러 테스트 ────────────────────────────────
 
-    logger.info("\n⏰ [3/7] 스케줄러 테스트")
+    logger.info("\n⏰ [3/5] 스케줄러 테스트")
 
     try:
         from core.scheduler import TradingScheduler
@@ -227,137 +226,25 @@ async def run_tests():
         logger.error(f"❌ 스케줄러 실패: {e}")
         failed += 1
 
-    # ─── 4. 한국투자증권 API 클라이언트 구조 테스트 ─────────
+    # ─── 4. 업비트 API 클라이언트 구조 테스트 ──────────────
 
-    logger.info("\n🏦 [4/7] 한국투자증권 API 구조 테스트")
-
-    try:
-        from broker.kis_api import KISClient, KISAuth, KISAPIError
-        from core.config import KISConfig
-
-        config = KISConfig()
-        client = KISClient(config)
-
-        # 모의투자 URL 확인
-        assert "openapivts" in config.base_url
-        logger.info(f"  Base URL: {config.base_url}")
-
-        # API 에러 클래스
-        err = KISAPIError("테스트 에러", "EGW00001")
-        assert "EGW00001" in str(err)
-
-        logger.success("✅ KIS API 클라이언트 구조 확인 (실제 연결은 키 필요)")
-        passed += 1
-    except Exception as e:
-        logger.error(f"❌ KIS API 구조 실패: {e}")
-        failed += 1
-
-    # ─── 5. 트레이딩 엔진 (기술적 분석) 테스트 ─────────────
-
-    logger.info("\n📈 [5/7] 트레이딩 엔진 테스트")
+    logger.info("\n🪙 [4/5] 업비트 API 구조 테스트")
 
     try:
-        import pandas as pd
-        import numpy as np
-        from modules.trading.trading_engine import TradingEngine
+        from broker.upbit_api import UpbitClient
 
-        # 모의 캔들 데이터 생성
-        np.random.seed(42)
-        dates = pd.date_range("2025-01-01", periods=120, freq="B")
-        prices = 70000 + np.cumsum(np.random.randn(120) * 500)
+        client = UpbitClient(access_key="", secret_key="", is_paper=True)
+        assert client.is_paper is True
 
-        mock_candles = []
-        for i, date in enumerate(dates):
-            p = prices[i]
-            mock_candles.append({
-                "date": date.strftime("%Y%m%d"),
-                "open": int(p - 200),
-                "high": int(p + 500),
-                "low": int(p - 500),
-                "close": int(p),
-                "volume": int(np.random.randint(100000, 1000000)),
-            })
-
-        # 엔진 인스턴스 (KIS 연결 없이 지표 계산만 테스트)
-        engine = TradingEngine({}, None)
-        df = engine._candles_to_df(mock_candles)
-        assert len(df) == 120
-
-        # 지표 계산
-        indicators = engine._calculate_indicators(df)
-        logger.info(f"  계산된 지표: {list(indicators.keys())}")
-
-        assert "rsi" in indicators
-        assert "macd" in indicators
-        assert "sma20" in indicators
-        assert 0 <= indicators["rsi"] <= 100
-
-        # 시그널 판단
-        signal, confidence = engine._evaluate_signal(indicators, df)
-        logger.info(f"  시그널: {signal.value} (신뢰도: {confidence:.3f})")
-        logger.info(f"  RSI: {indicators.get('rsi', 0):.1f}")
-        logger.info(f"  MACD Hist: {indicators.get('macd_hist', 0):.1f}")
-        logger.info(f"  BB Position: {indicators.get('bb_position', 0):.3f}")
-
-        # 목표가/손절가
-        target, stop = engine._calc_price_targets(
-            df["close"].iloc[-1], indicators, signal
-        )
-        if target:
-            logger.info(f"  목표가: {target:,}원 / 손절가: {stop:,}원")
-
-        logger.success("✅ 기술적 분석 엔진 동작 확인")
+        logger.success("✅ 업비트 API 클라이언트 구조 확인 (실제 연결은 키 필요)")
         passed += 1
     except Exception as e:
-        logger.error(f"❌ 트레이딩 엔진 실패: {e}")
+        logger.error(f"❌ 업비트 API 구조 실패: {e}")
         failed += 1
 
-    # ─── 6. 마스터 모듈 스코어링 테스트 ────────────────────
+    # ─── 5. 대시보드 API 테스트 ────────────────────────────
 
-    logger.info("\n🎯 [6/7] 마스터 모듈 스코어링 테스트")
-
-    try:
-        from modules.master.master_module import MasterModule
-
-        # 스코어링 로직만 테스트
-        master = MasterModule(
-            config=settings.get("modules", {}),
-            registry=PluginRegistry(),
-            kis_client=None,
-            trading_engine=None,
-        )
-
-        # 후보 종목 생성
-        test_candidates = [
-            StockCandidate(ticker="005930", name="삼성전자",
-                          news_score=80, sentiment_score=60, policy_score=90),
-            StockCandidate(ticker="000660", name="SK하이닉스",
-                          news_score=70, sentiment_score=50, policy_score=40),
-            StockCandidate(ticker="035420", name="NAVER",
-                          news_score=30, sentiment_score=80, policy_score=20),
-        ]
-
-        for c in test_candidates:
-            c.score = master._calculate_composite_score(c)
-
-        test_candidates.sort(key=lambda x: x.score, reverse=True)
-
-        for c in test_candidates:
-            logger.info(
-                f"  {c.ticker} ({c.name}): 종합={c.score:.1f} "
-                f"(뉴스:{c.news_score:.0f} 센티:{c.sentiment_score:.0f} 정책:{c.policy_score:.0f})"
-            )
-
-        assert test_candidates[0].ticker == "005930"  # 삼성전자가 1위
-        logger.success("✅ 종합 스코어링 로직 확인")
-        passed += 1
-    except Exception as e:
-        logger.error(f"❌ 마스터 모듈 실패: {e}")
-        failed += 1
-
-    # ─── 7. 대시보드 API 테스트 ────────────────────────────
-
-    logger.info("\n🌐 [7/7] 대시보드 API 테스트")
+    logger.info("\n🌐 [5/5] 대시보드 API 테스트")
 
     try:
         from fastapi.testclient import TestClient

@@ -46,31 +46,16 @@ def _load_vault_to_env() -> None:
         logger.debug(f"암호화 저장소 로드 스킵: {e}")
 
 
-class KISConfig(BaseModel):
-    """한국투자증권 API 설정."""
-    app_key: str = Field(default_factory=lambda: os.getenv("KIS_APP_KEY", ""))
-    app_secret: str = Field(default_factory=lambda: os.getenv("KIS_APP_SECRET", ""))
-    account_no: str = Field(default_factory=lambda: os.getenv("KIS_ACCOUNT_NO", ""))
-    account_prod_code: str = Field(default_factory=lambda: os.getenv("KIS_ACCOUNT_PROD_CODE", "01"))
-    is_paper: bool = Field(default_factory=lambda: os.getenv("KIS_IS_PAPER", "true").lower() == "true")
-
-    @property
-    def base_url(self) -> str:
-        if self.is_paper:
-            return "https://openapivts.koreainvestment.com:29443"
-        return "https://openapi.koreainvestment.com:9443"
-
-
 class GeminiConfig(BaseModel):
     """Gemini API 설정."""
     api_key: str = Field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    model: str = "gemini-2.5-flash"
+    model: str = "gemini-2.0-flash-lite"
 
 
 class ClaudeConfig(BaseModel):
-    """Claude API 설정 (보조)."""
+    """Claude API 설정."""
     api_key: str = Field(default_factory=lambda: os.getenv("CLAUDE_API_KEY", ""))
-    model: str = "claude-sonnet-4-20250514"
+    model: str = "claude-haiku-4-5-20251001"
 
 
 class EmailConfig(BaseModel):
@@ -83,7 +68,6 @@ class EmailConfig(BaseModel):
 
 class AppConfig(BaseModel):
     """전체 앱 설정 통합."""
-    kis: KISConfig = Field(default_factory=KISConfig)
     gemini: GeminiConfig = Field(default_factory=GeminiConfig)
     claude: ClaudeConfig = Field(default_factory=ClaudeConfig)
     email: EmailConfig = Field(default_factory=EmailConfig)

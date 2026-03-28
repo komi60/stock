@@ -18,7 +18,7 @@ KST = pytz.timezone("Asia/Seoul")
 
 
 class TradingScheduler:
-    """KRX 시장 시간 기반 스케줄러."""
+    """암호화폐 자동매매 스케줄러 (24/7 운영)."""
 
     def __init__(self, settings: dict[str, Any]):
         self._scheduler = AsyncIOScheduler(timezone=KST)
@@ -162,9 +162,5 @@ class TradingScheduler:
 
     @staticmethod
     def is_market_open() -> bool:
-        """현재 장중인지 확인."""
-        now = datetime.now(KST)
-        if now.weekday() >= 5:
-            return False
-        current_minutes = now.hour * 60 + now.minute
-        return 9 * 60 <= current_minutes <= 15 * 60 + 30
+        """현재 장중인지 확인. 암호화폐는 24/7 운영."""
+        return True

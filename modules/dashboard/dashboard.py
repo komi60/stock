@@ -46,11 +46,8 @@ class ManualOrderRequest(BaseModel):
 
 
 class ApiKeysRequest(BaseModel):
-    KIS_APP_KEY: str = ""
-    KIS_APP_SECRET: str = ""
-    KIS_ACCOUNT_NO: str = ""
-    KIS_ACCOUNT_PROD_CODE: str = "01"
-    KIS_IS_PAPER: str = "true"
+    UPBIT_ACCESS_KEY: str = ""
+    UPBIT_SECRET_KEY: str = ""
     GEMINI_API_KEY: str = ""
     CLAUDE_API_KEY: str = ""
     GMAIL_ADDRESS: str = ""
@@ -67,7 +64,7 @@ def create_dashboard(
     master_module: Any,
     config: dict[str, Any],
 ) -> FastAPI:
-    app = FastAPI(title="KR Stock AutoTrader Dashboard", version="2.0.0")
+    app = FastAPI(title="Upbit Crypto AutoTrader Dashboard", version="3.0.0")
     vault = SecureVault()
 
     app.add_middleware(
@@ -138,107 +135,145 @@ def create_dashboard(
 
     @app.get("/api/candidates")
     async def candidates():
+        """AI 선정 종목 조회 (ai_selections 테이블)."""
         try:
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
-            cursor = await db.execute(
-                "SELECT * FROM stock_candidates WHERE date = ? ORDER BY total_score DESC", (today,))
-            rows = await cursor.fetchall()
-            await db.close()
-            result = [{"ticker": r[2], "name": r[3], "total_score": r[4], "news_score": r[5],
-                        "sentiment_score": r[6], "policy_score": r[7], "technical_score": r[8], "signal": r[9]}
-                       for r in rows]
-            return {"date": today, "candidates": result}
+            try:
+                cursor = await db.execute(
+                    """SELECT id, market, confidence, reason, news_summary,
+                              price_at_selection, price_after_24h, result, selected_at
+                       FROM ai_selections
+                       WHERE selected_at >= ?
+                       ORDER BY confidence DESC""",
+                    (today,),
+                )
+                rows = await cursor.fetchall()
+                return {"date": today, "candidates": [
+                    {
+                        "id": r[0], "market": r[1], "confidence": r[2],
+                        "reason": r[3], "news_summary": r[4],
+                        "price_at_selection": r[5], "price_after_24h": r[6],
+                        "result": r[7], "selected_at": r[8],
+                    }
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "candidates": []}
 
     @app.get("/api/orders")
     async def recent_orders():
         try:
             db = await get_db()
-            cursor = await db.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT 50")
-            rows = await cursor.fetchall()
-            await db.close()
-            orders = [{"id": r[0], "order_id": r[1], "ticker": r[2], "side": r[3], "order_type": r[4],
-                        "quantity": r[5], "price": r[6], "status": r[7], "filled_quantity": r[8],
-                        "filled_price": r[9], "created_at": r[10]} for r in rows]
-            return {"orders": orders}
+            try:
+                cursor = await db.execute(
+                    "SELECT * FROM crypto_orders ORDER BY created_at DESC LIMIT 50"
+                )
+                rows = await cursor.fetchall()
+                return {"orders": [
+                    {
+                        "id": r[0], "market": r[1], "side": r[2], "volume": r[3],
+                        "price": r[4], "ord_type": r[5], "status": r[6],
+                        "uuid": r[7], "is_paper": r[8], "created_at": r[9],
+                    }
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "orders": []}
 
     @app.get("/api/performance")
     async def performance_history():
+        """크립토 주문 기반 성과 (일별 집계)."""
         try:
             db = await get_db()
-            cursor = await db.execute("SELECT * FROM daily_reports ORDER BY date DESC LIMIT 30")
-            rows = await cursor.fetchall()
-            await db.close()
-            reports = [{"date": r[1], "total_trades": r[2], "winning_trades": r[3], "losing_trades": r[4],
-                         "total_pnl": r[5], "total_pnl_pct": r[6], "max_drawdown_pct": r[7]} for r in rows]
-            return {"reports": reports}
+            try:
+                cursor = await db.execute(
+                    """SELECT DATE(created_at) as date,
+                              COUNT(*) as total_orders,
+                              SUM(CASE WHEN side='ask' THEN 1 ELSE 0 END) as sells
+                       FROM crypto_orders
+                       GROUP BY DATE(created_at)
+                       ORDER BY date DESC LIMIT 30"""
+                )
+                rows = await cursor.fetchall()
+                return {"reports": [{"date": r[0], "total_orders": r[1], "sells": r[2]} for r in rows]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "reports": []}
 
     @app.get("/api/news")
     async def recent_news():
         try:
             db = await get_db()
-            cursor = await db.execute(
-                "SELECT title, source, sentiment, impact_score, ai_summary, created_at "
-                "FROM news ORDER BY created_at DESC LIMIT 50")
-            rows = await cursor.fetchall()
-            await db.close()
-            news = [{"title": r[0], "source": r[1], "sentiment": r[2], "impact_score": r[3],
-                      "summary": r[4], "time": r[5]} for r in rows]
-            return {"news": news}
+            try:
+                cursor = await db.execute(
+                    """SELECT title, source, sentiment, impact_score, ai_summary, created_at
+                       FROM crypto_news ORDER BY created_at DESC LIMIT 50"""
+                )
+                rows = await cursor.fetchall()
+                return {"news": [
+                    {"title": r[0], "source": r[1], "sentiment": r[2],
+                     "impact_score": r[3], "summary": r[4], "time": r[5]}
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "news": []}
 
     @app.get("/api/rumors")
     async def recent_rumors():
+        """채널 신뢰도 정보 반환 (루머 테이블 대체)."""
         try:
             db = await get_db()
-            cursor = await db.execute(
-                "SELECT content, source_channel, channel_trust_score, sentiment, "
-                "impact_score, related_tickers, verified, collected_at "
-                "FROM rumors ORDER BY collected_at DESC LIMIT 30")
-            rows = await cursor.fetchall()
-            await db.close()
-            rumors = [{"content": r[0], "source_channel": r[1], "trust_score": r[2],
-                        "sentiment": r[3], "impact_score": r[4], "related_tickers": r[5],
-                        "verified": r[6], "time": r[7]} for r in rows]
-            return {"rumors": rumors}
+            try:
+                cursor = await db.execute(
+                    """SELECT channel, trust_score, total_predictions, correct_predictions
+                       FROM channel_trust ORDER BY trust_score DESC"""
+                )
+                rows = await cursor.fetchall()
+                return {"channel_trust": [
+                    {"channel": r[0], "trust_score": r[1],
+                     "total_predictions": r[2], "correct_predictions": r[3]}
+                    for r in rows
+                ]}
+            finally:
+                await db.close()
         except Exception as e:
-            return {"error": str(e)}
+            return {"error": str(e), "channel_trust": []}
 
     @app.get("/api/stats")
     async def dashboard_stats():
         try:
             db = await get_db()
             today = datetime.now().strftime("%Y-%m-%d")
-            c1 = await db.execute("SELECT COUNT(*) FROM news WHERE created_at >= ?", (today,))
-            news_today = (await c1.fetchone())[0]
-            c2 = await db.execute("SELECT COUNT(*) FROM news")
-            news_total = (await c2.fetchone())[0]
-            c3 = await db.execute(
-                "SELECT sentiment, COUNT(*) FROM news WHERE sentiment != 'pending' GROUP BY sentiment")
-            sentiment_dist = {r[0]: r[1] for r in await c3.fetchall()}
-            c4 = await db.execute("SELECT COUNT(*) FROM rumors WHERE collected_at >= ?", (today,))
-            rumors_today = (await c4.fetchone())[0]
-            c5 = await db.execute("SELECT COUNT(*) FROM rumors")
-            rumors_total = (await c5.fetchone())[0]
-            c6 = await db.execute("SELECT COUNT(*) FROM orders WHERE created_at >= ?", (today,))
-            orders_today = (await c6.fetchone())[0]
-            c7 = await db.execute(
-                "SELECT COUNT(*) FROM stock_candidates WHERE date = ?", (today,))
-            candidates_today = (await c7.fetchone())[0]
-            await db.close()
-            return {
-                "news_today": news_today, "news_total": news_total,
-                "rumors_today": rumors_today, "rumors_total": rumors_total,
-                "orders_today": orders_today, "candidates_today": candidates_today,
-                "sentiment_distribution": sentiment_dist,
-            }
+            try:
+                c1 = await db.execute(
+                    "SELECT COUNT(*) FROM crypto_news WHERE created_at >= ?", (today,))
+                news_today = (await c1.fetchone())[0]
+                c2 = await db.execute("SELECT COUNT(*) FROM crypto_news")
+                news_total = (await c2.fetchone())[0]
+                c3 = await db.execute(
+                    "SELECT sentiment, COUNT(*) FROM crypto_news WHERE sentiment != 'pending' GROUP BY sentiment")
+                sentiment_dist = {r[0]: r[1] for r in await c3.fetchall()}
+                c4 = await db.execute(
+                    "SELECT COUNT(*) FROM crypto_orders WHERE created_at >= ?", (today,))
+                orders_today = (await c4.fetchone())[0]
+                c5 = await db.execute(
+                    "SELECT COUNT(*) FROM ai_selections WHERE selected_at >= ?", (today,))
+                candidates_today = (await c5.fetchone())[0]
+                return {
+                    "news_today": news_today, "news_total": news_total,
+                    "orders_today": orders_today, "candidates_today": candidates_today,
+                    "sentiment_distribution": sentiment_dist,
+                }
+            finally:
+                await db.close()
         except Exception as e:
             return {"error": str(e)}
 
@@ -253,24 +288,27 @@ def create_dashboard(
 
     @app.post("/api/manual-order", dependencies=[Depends(require_local)])
     async def manual_order(order_req: ManualOrderRequest):
+        """크립토 수동 주문 (market: KRW-BTC, side: bid/ask, price: KRW금액)."""
         if not master_module:
             raise HTTPException(500, "마스터 모듈이 초기화되지 않았습니다.")
-        from core.data_models import Order, OrderSide, OrderType
         try:
-            order = Order(ticker=order_req.ticker, side=OrderSide(order_req.side),
-                          order_type=OrderType(order_req.order_type),
-                          quantity=order_req.quantity, price=order_req.price)
-            if order.side == OrderSide.BUY:
-                from core.data_models import StockCandidate, SignalStrength, TechnicalSignal
-                candidate = StockCandidate(ticker=order.ticker, name="수동매매")
-                signal = TechnicalSignal(ticker=order.ticker, signal=SignalStrength.BUY, entry_price=order.price)
-                order_id = await master_module._execute_buy(candidate, signal)
+            from broker.upbit_api import UpbitClient
+            upbit: UpbitClient = master_module._upbit
+            if order_req.side == "bid":
+                result = await upbit.place_order(
+                    market=order_req.ticker,
+                    side="bid",
+                    price=order_req.price or 10000,
+                    ord_type="price",
+                )
             else:
-                from core.data_models import Position
-                pos = Position(ticker=order.ticker, name="수동매매",
-                               quantity=order.quantity, avg_price=order.price or 0)
-                order_id = await master_module._execute_sell(pos, "수동 매도")
-            return {"status": "submitted", "order_id": order_id}
+                result = await upbit.place_order(
+                    market=order_req.ticker,
+                    side="ask",
+                    volume=order_req.quantity,
+                    ord_type="market",
+                )
+            return {"status": "submitted", "result": result}
         except Exception as e:
             raise HTTPException(500, str(e))
 
@@ -290,6 +328,160 @@ def create_dashboard(
             return {"status": "restarted", "module": module_name}
         except Exception as e:
             raise HTTPException(500, str(e))
+
+    # ─── 암호화폐 API 엔드포인트 ──────────────────────────
+
+    @app.get("/api/crypto/portfolio")
+    async def crypto_portfolio():
+        """크립토 포트폴리오 요약."""
+        crypto_master = registry.get("crypto_master")
+        if crypto_master and hasattr(crypto_master, "get_portfolio_summary"):
+            return crypto_master.get_portfolio_summary()
+        return {
+            "positions": [],
+            "total_positions": 0,
+            "total_value": 0,
+            "total_pnl_pct": 0,
+            "is_paper": True,
+            "message": "크립토 모듈이 비활성화 상태입니다.",
+        }
+
+    @app.get("/api/crypto/signals")
+    async def crypto_signals():
+        """최근 크립토 매매 신호."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT market, signal, confidence, rsi, macd, bb_position,
+                          fear_greed_index, total_score, created_at
+                   FROM crypto_signals
+                   ORDER BY created_at DESC LIMIT 50"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "signals": [
+                    {
+                        "market": r[0], "signal": r[1], "confidence": r[2],
+                        "rsi": r[3], "macd": r[4], "bb_position": r[5],
+                        "fear_greed_index": r[6], "total_score": r[7],
+                        "created_at": r[8],
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "signals": []}
+
+    @app.get("/api/crypto/orders")
+    async def crypto_orders():
+        """최근 크립토 주문 내역."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT market, side, volume, price, ord_type, status,
+                          uuid, is_paper, created_at
+                   FROM crypto_orders
+                   ORDER BY created_at DESC LIMIT 50"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "orders": [
+                    {
+                        "market": r[0], "side": r[1], "volume": r[2],
+                        "price": r[3], "ord_type": r[4], "status": r[5],
+                        "uuid": r[6], "is_paper": bool(r[7]), "created_at": r[8],
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "orders": []}
+
+    @app.get("/api/crypto/news")
+    async def crypto_news_feed():
+        """최근 크립토 뉴스."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT title, source, sentiment, impact_score,
+                          related_coins, ai_summary, created_at
+                   FROM crypto_news
+                   ORDER BY created_at DESC LIMIT 50"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "news": [
+                    {
+                        "title": r[0], "source": r[1], "sentiment": r[2],
+                        "impact_score": r[3], "related_coins": r[4],
+                        "summary": r[5], "time": r[6],
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "news": []}
+
+    @app.get("/api/crypto/fear-greed")
+    async def crypto_fear_greed():
+        """현재 Fear & Greed Index."""
+        crypto_news_module = registry.get("crypto_news")
+        if crypto_news_module and hasattr(crypto_news_module, "get_fear_greed_index"):
+            index = crypto_news_module.get_fear_greed_index()
+            label_map = {
+                (0, 25): "Extreme Fear",
+                (25, 45): "Fear",
+                (45, 55): "Neutral",
+                (55, 75): "Greed",
+                (75, 101): "Extreme Greed",
+            }
+            label = next(
+                (v for (lo, hi), v in label_map.items() if lo <= index < hi),
+                "Neutral"
+            )
+            return {"value": index, "label": label}
+        return {"value": 50, "label": "Neutral", "message": "크립토 뉴스 모듈 비활성"}
+
+    @app.get("/api/crypto/channel-trust")
+    async def crypto_channel_trust():
+        """채널별 신뢰도 조회."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT channel, trust_score, total_predictions, correct_predictions
+                   FROM channel_trust ORDER BY trust_score DESC"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "channels": [
+                    {
+                        "channel": r[0], "trust_score": r[1],
+                        "total": r[2], "correct": r[3],
+                        "hit_rate": round(r[3] / r[2] * 100, 1) if r[2] > 0 else 0,
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "channels": []}
+
+    @app.post("/api/crypto/keys", dependencies=[Depends(require_local)])
+    async def save_upbit_keys(keys: dict):
+        """업비트 API 키 저장 (로컬 전용)."""
+        access_key = keys.get("UPBIT_ACCESS_KEY", "")
+        secret_key = keys.get("UPBIT_SECRET_KEY", "")
+        if access_key:
+            vault.set("UPBIT_ACCESS_KEY", access_key)
+        if secret_key:
+            vault.set("UPBIT_SECRET_KEY", secret_key)
+        vault.save()
+        vault.export_to_env()
+        logger.info("업비트 API 키 저장 완료")
+        return {"status": "saved"}
 
     return app
 
@@ -457,12 +649,8 @@ function updateClock(){
     document.getElementById('kstClock').textContent=h+':'+m+':'+s;
     var days=['일','월','화','수','목','금','토'];
     document.getElementById('kstDate').textContent=(now.getMonth()+1)+'/'+now.getDate()+' ('+days[now.getDay()]+')';
-    var day=now.getDay(),mins=now.getHours()*60+now.getMinutes(),el=document.getElementById('mktCd');
-    if(day>=1&&day<=5){
-        if(mins<540){var d=540-mins;el.textContent='장 시작까지 '+Math.floor(d/60)+'h '+d%60+'m';el.className='mkt-cd closed';}
-        else if(mins<=930){var d=930-mins;el.textContent='장 마감까지 '+Math.floor(d/60)+'h '+d%60+'m';el.className='mkt-cd open';}
-        else{el.textContent='장 마감';el.className='mkt-cd closed';}
-    }else{el.textContent='주말 휴장';el.className='mkt-cd closed';}
+    var el=document.getElementById('mktCd');
+    el.textContent='업비트 운영중';el.className='mkt-cd open';
 }
 setInterval(updateClock,1000);updateClock();
 """
@@ -484,15 +672,20 @@ function updateSentiChart(dist){
 
 _JS_FETCHERS = """
 var allNews=[];
+var CRYPTO_SOURCES=['coindesk','cointelegraph','decrypt','cryptonews','theblock','bitcoinmagazine','beincrypto'];
+var KR_SOURCES=['coindesk_kr','coindesk_korea'];
+var US_SOURCES=['cnbc','reuters_business','reuters_world','thehill','politico'];
+
 async function fetchAll(){
     var results=await Promise.allSettled([
         fetch('/api/status').then(function(r){return r.json();}),
-        fetch('/api/portfolio').then(function(r){return r.json();}),
+        fetch('/api/crypto/portfolio').then(function(r){return r.json();}),
         fetch('/api/candidates').then(function(r){return r.json();}),
         fetch('/api/orders').then(function(r){return r.json();}),
-        fetch('/api/news').then(function(r){return r.json();}),
-        fetch('/api/rumors').then(function(r){return r.json();}),
+        fetch('/api/crypto/news').then(function(r){return r.json();}),
+        fetch('/api/crypto/fear-greed').then(function(r){return r.json();}),
         fetch('/api/stats').then(function(r){return r.json();}),
+        fetch('/api/crypto/channel-trust').then(function(r){return r.json();}),
     ]);
     var vals=results.map(function(r){return r.status==='fulfilled'?r.value:null;});
     if(vals[0])renderStatus(vals[0]);
@@ -500,88 +693,112 @@ async function fetchAll(){
     if(vals[2])renderCandidates(vals[2]);
     if(vals[3])renderOrders(vals[3]);
     if(vals[4]){allNews=vals[4].news||[];renderNews(allNews);}
-    if(vals[5])renderRumors(vals[5]);
+    if(vals[5])renderFearGreed(vals[5]);
     if(vals[6])renderStats(vals[6]);
+    if(vals[7])renderChannelTrust(vals[7]);
 }
 
 function renderStatus(d){
     var dot=document.getElementById('statusDot');
-    if(dot)dot.className='dot '+(d.market_open?'green':'red');
-    var rows=Object.entries(d.modules).map(function(e){
+    if(dot)dot.className='dot green';
+    var rows=Object.entries(d.modules||{}).map(function(e){
         var n=e[0],m=e[1];
-        return '<tr><td>'+n+'</td><td><span class="badge '+m.status+'">'+m.status+'</span></td><td>'+m.execution_count+'</td><td style="color:'+(m.error_count>0?'var(--red)':'var(--text-muted)')+'">'+m.error_count+'</td></tr>';
+        var nameMap={crypto_news:'뉴스수집',crypto_trading:'기술분석',crypto_master:'자동매매'};
+        return '<tr><td>'+(nameMap[n]||n)+'</td><td><span class="badge '+m.status+'">'+m.status+'</span></td><td>'+m.execution_count+'</td><td style="color:'+(m.error_count>0?'var(--red)':'var(--text-muted)')+'">'+m.error_count+'</td></tr>';
     }).join('');
     document.getElementById('modulesTable').innerHTML=rows||emptyHtml('모듈 없음');
-    // scheduler
     var jobs=(d.scheduled_jobs||[]);
     var jH=jobs.map(function(j){
         var next=j.next_run?new Date(j.next_run).toLocaleTimeString('ko-KR',{hour:'2-digit',minute:'2-digit'}):'—';
-        return '<tr><td>'+j.name+'</td><td>'+next+'</td><td style="color:var(--text-muted);font-size:0.8em">'+j.trigger+'</td></tr>';
+        var nameMap={crypto_news_collect:'뉴스수집(30분)',crypto_trading_loop:'매매루프(5분)'};
+        return '<tr><td>'+(nameMap[j.name]||j.name)+'</td><td>'+next+'</td><td style="color:var(--text-muted);font-size:0.8em">'+j.trigger+'</td></tr>';
     }).join('');
     document.getElementById('schedTable').innerHTML=jH||emptyHtml('예정 작업 없음');
 }
 
 function renderPortfolio(p){
-    var tv=p.total_value||0,pnl=p.total_pnl||0,pct=p.total_pnl_pct||0;
+    var tv=p.total_value||0,pct=p.total_pnl_pct||0;
     document.getElementById('totalValue').textContent=fmtKRW(tv);
     var pe=document.getElementById('totalPnl');
-    pe.textContent=(pnl>=0?'+':'')+fmtKRW(pnl);
-    pe.className='big-number '+(pnl>=0?'positive':'negative');
+    pe.textContent=(pct>=0?'+':'')+pct.toFixed(2)+'%';
+    pe.className='big-number '+(pct>=0?'positive':'negative');
     var positions=p.positions||[];
+    document.getElementById('posCount').textContent=positions.length;
     var rows=positions.map(function(x){
-        var pctCls=(x.unrealized_pnl_pct||0)>=0?'positive':'negative';
-        return '<tr><td>'+(x.name||x.ticker)+'</td><td>'+x.quantity+'</td><td>'+(x.avg_price||0).toLocaleString()+'</td><td>'+(x.current_price||0).toLocaleString()+'</td><td class="'+pctCls+'">'+(x.unrealized_pnl_pct||0).toFixed(2)+'%</td></tr>';
+        var pct2=x.pnl_pct||0,pctCls=pct2>=0?'positive':'negative';
+        var coin=(x.market||'').replace('KRW-','');
+        return '<tr><td><strong>'+coin+'</strong></td><td>'+(x.volume||0).toFixed(6)+'</td><td>'+(x.avg_price||0).toLocaleString()+'</td><td>'+(x.current_price||0).toLocaleString()+'</td><td class="'+pctCls+'">'+(pct2>=0?'+':'')+pct2.toFixed(2)+'%</td><td style="color:var(--red)">'+(x.stop_loss_price||0).toLocaleString()+'</td></tr>';
     }).join('');
-    document.getElementById('posTable').innerHTML=rows||emptyHtml('보유 종목 없음');
+    document.getElementById('posTable').innerHTML=rows||emptyHtml('보유 코인 없음');
 }
 
 function renderCandidates(c){
     var list=(c.candidates||[]).slice(0,10);
     var rows=list.map(function(x){
-        return '<tr><td><strong>'+x.ticker+'</strong></td><td>'+scoreHtml(x.total_score)+'</td><td>'+scoreHtml(x.news_score)+'</td><td>'+scoreHtml(x.sentiment_score)+'</td><td><span class="badge '+(x.signal||'')+'">'+({strong_buy:'강력매수',buy:'매수',hold:'관망',sell:'매도',strong_sell:'강력매도'}[x.signal]||x.signal||'-')+'</span></td></tr>';
+        var coin=(x.market||'').replace('KRW-','');
+        var conf=x.confidence||0;
+        var confColor=conf>=0.8?'var(--green)':conf>=0.6?'var(--amber)':'var(--text-muted)';
+        var result=x.result?'<span class="badge '+(x.result==='hit'?'running':'error')+'">'+( x.result==='hit'?'적중':'미스')+'</span>':'-';
+        var price=x.price_at_selection>0?(x.price_at_selection||0).toLocaleString():'-';
+        return '<tr><td><strong>'+coin+'</strong></td><td style="color:'+confColor+'">'+conf.toFixed(2)+'</td><td style="font-size:0.82em;color:var(--text-sub)">'+trunc(x.reason||x.news_summary||'-',40)+'</td><td style="font-size:0.82em">'+price+'</td><td>'+result+'</td><td style="color:var(--text-muted)">'+fmtTime(x.selected_at)+'</td></tr>';
     }).join('');
-    document.getElementById('candTable').innerHTML=rows||emptyHtml('오늘 후보 없음');
+    document.getElementById('candTable').innerHTML=rows||emptyHtml('AI 선정 종목 없음 (뉴스 수집 후 생성)');
 }
 
 function renderOrders(o){
     var list=(o.orders||[]).slice(0,10);
     var rows=list.map(function(x){
-        var sideCls=x.side==='buy'?'positive':'negative';
-        var sideText=x.side==='buy'?'매수':'매도';
-        return '<tr><td>'+fmtTime(x.created_at)+'</td><td>'+x.ticker+'</td><td class="'+sideCls+'">'+sideText+'</td><td>'+x.quantity+'</td><td>'+(x.price||0).toLocaleString()+'</td><td><span class="badge '+(x.status||'')+'">'+x.status+'</span></td></tr>';
+        var sideCls=x.side==='bid'?'positive':'negative';
+        var sideText=x.side==='bid'?'매수':'매도';
+        var coin=(x.market||'').replace('KRW-','');
+        var modeText=x.is_paper?'<span style="color:var(--amber);font-size:0.75em">모의</span>':'<span style="color:var(--green);font-size:0.75em">실거래</span>';
+        return '<tr><td>'+fmtTime(x.created_at)+'</td><td><strong>'+coin+'</strong></td><td class="'+sideCls+'">'+sideText+'</td><td>'+(x.volume||0).toFixed(6)+'</td><td>'+(x.price||0).toLocaleString()+'</td><td>'+modeText+'</td></tr>';
     }).join('');
     document.getElementById('ordersTable').innerHTML=rows||emptyHtml('주문 내역 없음');
 }
 
 function renderNews(list){
-    var rows=list.slice(0,20).map(function(x){
-        return '<tr class="fade-in"><td style="white-space:nowrap;color:var(--text-muted)">'+fmtTime(x.time)+'</td><td>'+trunc(x.title,50)+'</td><td style="color:var(--text-muted)">'+((x.source||'').length>12?(x.source||'').slice(0,12)+'..':x.source||'-')+'</td><td>'+sentiBadge(x.sentiment)+'</td><td>'+impactHtml(x.impact_score)+'</td></tr>';
+    var rows=list.slice(0,30).map(function(x){
+        return '<tr class="fade-in"><td style="white-space:nowrap;color:var(--text-muted)">'+fmtTime(x.time)+'</td><td>'+trunc(x.title,52)+'</td><td style="color:var(--text-muted);font-size:0.8em">'+((x.source||'').slice(0,14))+'</td><td>'+sentiBadge(x.sentiment)+'</td><td>'+impactHtml(x.impact_score)+'</td></tr>';
     }).join('');
     document.getElementById('newsTable').innerHTML=rows||emptyHtml('수집된 뉴스 없음');
 }
+
 function filterNews(f){
     document.querySelectorAll('.tab-btn').forEach(function(b){b.classList.remove('active');});
     event.target.classList.add('active');
     var filtered=allNews;
-    if(f==='domestic')filtered=allNews.filter(function(n){return DOMESTIC.some(function(s){return (n.source||'').toLowerCase().includes(s);});});
-    else if(f==='global')filtered=allNews.filter(function(n){return !DOMESTIC.some(function(s){return (n.source||'').toLowerCase().includes(s);});});
+    if(f==='crypto')filtered=allNews.filter(function(n){return CRYPTO_SOURCES.some(function(s){return (n.source||'').toLowerCase()===s;});});
+    else if(f==='global')filtered=allNews.filter(function(n){return US_SOURCES.some(function(s){return (n.source||'').toLowerCase()===s;});});
+    else if(f==='kr')filtered=allNews.filter(function(n){return KR_SOURCES.some(function(s){return (n.source||'').toLowerCase()===s;});});
     renderNews(filtered);
 }
 
-function renderRumors(d){
-    var list=(d.rumors||[]).slice(0,12);
-    if(!list.length){document.getElementById('rumorsContent').innerHTML=emptyHtml('수집된 루머 없음');return;}
+function renderFearGreed(fg){
+    var v=fg.value||50,label=fg.label||'Neutral';
+    var el=document.getElementById('statFG');
+    if(el){el.textContent=v+' ('+label+')';}
+    var badge=document.getElementById('fgBadge');
+    if(badge){
+        var color=v<=25?'var(--red)':v<=45?'var(--amber)':v<=55?'var(--text-muted)':v<=75?'var(--blue)':'var(--green)';
+        badge.textContent='F&G: '+v+' '+label;
+        badge.style.color=color;
+    }
+}
+
+function renderChannelTrust(d){
+    var list=(d.channels||[]).slice(0,12);
+    if(!list.length){document.getElementById('trustContent').innerHTML=emptyHtml('채널 데이터 없음');return;}
     var html=list.map(function(r){
         var trustColor=r.trust_score>=0.7?'var(--green)':r.trust_score>=0.4?'var(--amber)':'var(--red)';
-        var verified=r.verified?'<span style="color:var(--green);font-size:0.75em">✓ 검증</span>':'<span style="color:var(--text-muted);font-size:0.75em">미검증</span>';
-        return '<div class="rumor-item"><div class="rumor-meta"><span class="trust-dot" style="background:'+trustColor+'"></span><strong style="color:var(--text-sub)">'+(r.source_channel||'익명')+'</strong>'+sentiBadge(r.sentiment)+verified+'<span style="color:var(--text-muted)">'+fmtTime(r.time)+'</span></div><div class="rumor-content">'+(r.content||'').slice(0,120)+(r.content&&r.content.length>120?'...':'')+'</div></div>';
+        var pct=Math.round(r.trust_score*100);
+        return '<div class="rumor-item"><div class="rumor-meta"><span class="trust-dot" style="background:'+trustColor+'"></span><strong style="color:var(--text-sub)">'+r.channel+'</strong><span style="color:'+trustColor+';font-size:0.8em;margin-left:auto">신뢰 '+pct+'%</span></div><div style="display:flex;align-items:center;gap:8px;margin-top:4px;"><div class="score-bar" style="flex:1"><div class="score-fill" style="width:'+pct+'%;background:'+trustColor+'"></div></div><span style="font-size:0.75em;color:var(--text-muted)">'+r.correct+'/'+r.total+'</span></div></div>';
     }).join('');
-    document.getElementById('rumorsContent').innerHTML=html;
+    document.getElementById('trustContent').innerHTML=html;
 }
 
 function renderStats(s){
     animateNum(document.getElementById('statNews'),s.news_total||0);
-    animateNum(document.getElementById('statRumors'),s.rumors_total||0);
     animateNum(document.getElementById('statCandidates'),s.candidates_today||0);
     animateNum(document.getElementById('statOrders'),s.orders_today||0);
     if(s.sentiment_distribution)updateSentiChart(s.sentiment_distribution);
@@ -589,8 +806,18 @@ function renderStats(s){
 
 async function submitOrder(e){
     e.preventDefault();
-    var d={ticker:document.getElementById('ticker').value,side:document.getElementById('side').value,quantity:parseInt(document.getElementById('quantity').value),price:parseFloat(document.getElementById('price').value)||null,order_type:document.getElementById('price').value?'limit':'market'};
-    try{var r=await fetch('/api/manual-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});var res=await r.json();alert(res.status==='submitted'?'주문 완료: '+res.order_id:'오류: '+JSON.stringify(res));fetchAll();}catch(err){alert('실패: '+err.message);}
+    var d={
+        ticker:document.getElementById('ticker').value,
+        side:document.getElementById('side').value,
+        quantity:parseFloat(document.getElementById('quantity').value)||0,
+        price:parseFloat(document.getElementById('price').value)||0
+    };
+    try{
+        var r=await fetch('/api/manual-order',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(d)});
+        var res=await r.json();
+        alert(res.status==='submitted'?'주문 완료':'오류: '+JSON.stringify(res));
+        fetchAll();
+    }catch(err){alert('실패: '+err.message);}
 }
 """
 
@@ -602,8 +829,8 @@ async function submitOrder(e){
 _TOPBAR_HTML = """
 <div class="header">
     <h1>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><path d="M3 3v18h18"/><path d="M7 16l4-8 4 4 5-9"/></svg>
-        KR Stock AutoTrader
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.5 9a3 3 0 015 1.5c0 2-3 3-3 3"/><path d="M12 17h.01"/></svg>
+        Upbit Crypto AutoTrader
     </h1>
     <div style="display:flex;align-items:center;gap:12px;">
         <div class="nav">
@@ -616,8 +843,8 @@ _TOPBAR_HTML = """
 </div>
 <div class="stats-ribbon">
     <div class="stat-item"><span class="stat-value" id="statNews">--</span><span class="stat-label">뉴스 수집</span></div>
-    <div class="stat-item"><span class="stat-value" id="statRumors">--</span><span class="stat-label">루머</span></div>
-    <div class="stat-item"><span class="stat-value" id="statCandidates">--</span><span class="stat-label">투자 후보</span></div>
+    <div class="stat-item"><span class="stat-value" id="statCandidates">--</span><span class="stat-label">AI 선정</span></div>
+    <div class="stat-item"><span class="stat-value" id="statFG" style="color:var(--amber)">--</span><span class="stat-label">Fear &amp; Greed</span></div>
     <div class="stat-item"><span class="stat-value" id="statOrders">--</span><span class="stat-label">오늘 주문</span></div>
 </div>
 """
@@ -633,23 +860,25 @@ _GRID_HTML = """
         <span class="clock-time" id="kstClock">--:--:--</span>
         <span class="clock-date" id="kstDate">-</span>
     </div>
-    <div style="margin-top:12px;">
-        <span class="mkt-cd closed" id="mktCd">로딩...</span>
+    <div style="margin-top:12px;display:flex;align-items:center;gap:10px;">
+        <span class="mkt-cd open" id="mktCd">업비트 운영중</span>
+        <span id="fgBadge" style="font-size:0.82em;padding:4px 12px;border-radius:8px;font-weight:600;background:rgba(245,158,11,0.1);color:var(--amber)">F&amp;G: --</span>
     </div>
 </div>
 
 <div class="card span-2">
     <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8V7m0 10v1m9-9a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        포트폴리오
+        크립토 포트폴리오
     </h2>
     <div style="display:flex;justify-content:space-around;margin-bottom:14px;">
-        <div class="metric"><div class="big-number" id="totalValue">0원</div><label>총 평가금</label></div>
-        <div class="metric"><div class="big-number positive" id="totalPnl">+0원</div><label>총 손익</label></div>
+        <div class="metric"><div class="big-number" id="totalValue">--</div><label>총 평가금</label></div>
+        <div class="metric"><div class="big-number" id="totalPnl">--</div><label>총 손익률</label></div>
+        <div class="metric"><div class="big-number" id="posCount">0</div><label>보유 종목</label></div>
     </div>
     <table>
-        <thead><tr><th>종목</th><th>수량</th><th>평균가</th><th>현재가</th><th>수익률</th></tr></thead>
-        <tbody id="posTable"><tr><td colspan="5"><div class="sk" style="width:70%"></div><div class="sk" style="width:50%"></div></td></tr></tbody>
+        <thead><tr><th>코인</th><th>수량</th><th>평균매수가</th><th>현재가</th><th>손익률</th><th>스탑로스</th></tr></thead>
+        <tbody id="posTable"><tr><td colspan="6"><div class="sk" style="width:70%"></div><div class="sk" style="width:50%"></div></td></tr></tbody>
     </table>
 </div>
 
@@ -657,7 +886,7 @@ _GRID_HTML = """
 <div class="card">
     <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 3.055A9.001 9.001 0 1020.945 13H11V3.055z"/><path d="M20.488 9H15V3.512A9.025 9.025 0 0120.488 9z"/></svg>
-        감정 분포
+        뉴스 감정 분포
     </h2>
     <div style="max-width:220px;margin:0 auto;">
         <canvas id="sentiCanvas"></canvas>
@@ -687,25 +916,25 @@ _GRID_HTML = """
     </table>
 </div>
 
-<!-- Row 3: Candidates -->
+<!-- Row 3: AI 선정 종목 + 채널 신뢰도 -->
 <div class="card span-2">
     <h2>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
-        오늘의 투자 후보
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.343-5.657l-.707-.707m2.828 9.9a5 5 0 117.072 0l-.548.547A3.374 3.374 0 0014 18.469V19a2 2 0 11-4 0v-.531c0-.895-.356-1.754-.988-2.386l-.548-.547z"/></svg>
+        AI 선정 종목 (오늘)
     </h2>
     <table>
-        <thead><tr><th>종목</th><th>종합</th><th>뉴스</th><th>센티멘트</th><th>시그널</th></tr></thead>
-        <tbody id="candTable"><tr><td colspan="5"><div class="sk" style="width:80%"></div><div class="sk" style="width:60%"></div></td></tr></tbody>
+        <thead><tr><th>코인</th><th>신뢰도</th><th>선정 이유</th><th>매수가</th><th>결과</th><th>시각</th></tr></thead>
+        <tbody id="candTable"><tr><td colspan="6"><div class="sk" style="width:80%"></div><div class="sk" style="width:60%"></div></td></tr></tbody>
     </table>
 </div>
 
-<!-- Rumors -->
+<!-- 채널 신뢰도 -->
 <div class="card">
     <h2>
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z"/></svg>
-        루머 피드
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        채널 신뢰도
     </h2>
-    <div id="rumorsContent">
+    <div id="trustContent">
         <div class="sk" style="width:85%"></div><div class="sk" style="width:65%"></div><div class="sk" style="width:75%"></div>
     </div>
 </div>
@@ -714,12 +943,13 @@ _GRID_HTML = """
 <div class="card span-2">
     <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/></svg>
-        뉴스
+        글로벌 크립토 뉴스
     </h2>
     <div class="tab-nav">
         <button class="tab-btn active" onclick="filterNews('all')">전체</button>
-        <button class="tab-btn" onclick="filterNews('domestic')">국내</button>
-        <button class="tab-btn" onclick="filterNews('global')">해외</button>
+        <button class="tab-btn" onclick="filterNews('crypto')">크립토</button>
+        <button class="tab-btn" onclick="filterNews('global')">미국 정치/경제</button>
+        <button class="tab-btn" onclick="filterNews('kr')">한국</button>
     </div>
     <table>
         <thead><tr><th>시간</th><th>제목</th><th>출처</th><th>감정</th><th>영향도</th></tr></thead>
@@ -734,7 +964,7 @@ _GRID_HTML = """
         최근 주문
     </h2>
     <table>
-        <thead><tr><th>시간</th><th>종목</th><th>구분</th><th>수량</th><th>가격</th><th>상태</th></tr></thead>
+        <thead><tr><th>시간</th><th>코인</th><th>구분</th><th>수량</th><th>가격</th><th>모드</th></tr></thead>
         <tbody id="ordersTable"><tr><td colspan="6"><div class="sk" style="width:80%"></div><div class="sk" style="width:55%"></div></td></tr></tbody>
     </table>
 </div>
@@ -744,24 +974,24 @@ _WRITE_CONTROLS_HTML = """
 <div class="card span-2">
     <h2>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4"/></svg>
-        수동 주문
+        수동 주문 (크립토)
     </h2>
     <form id="manualOrderForm" onsubmit="submitOrder(event)" style="display:flex;flex-wrap:wrap;gap:8px;align-items:end;">
-        <div style="flex:1;min-width:110px;">
-            <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">종목코드</label>
-            <input type="text" id="ticker" placeholder="005930" required style="width:100%;">
+        <div style="flex:1;min-width:130px;">
+            <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">마켓</label>
+            <input type="text" id="ticker" placeholder="KRW-BTC" required style="width:100%;">
         </div>
         <div>
             <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">구분</label>
-            <select id="side" style="width:100%;"><option value="buy">매수</option><option value="sell">매도</option></select>
+            <select id="side" style="width:100%;"><option value="bid">매수</option><option value="ask">매도</option></select>
+        </div>
+        <div style="flex:1;min-width:110px;">
+            <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">매수금액 (KRW) / 매도수량</label>
+            <input type="number" id="price" placeholder="매수: KRW금액" style="width:100%;">
         </div>
         <div style="flex:1;min-width:80px;">
-            <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">수량</label>
-            <input type="number" id="quantity" placeholder="수량" required style="width:100%;">
-        </div>
-        <div style="flex:1;min-width:100px;">
-            <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">가격</label>
-            <input type="number" id="price" placeholder="시장가=빈칸" style="width:100%;">
+            <label style="display:block;color:var(--text-muted);font-size:0.78em;margin-bottom:4px;">수량 (매도시)</label>
+            <input type="number" id="quantity" placeholder="매도수량" step="any" style="width:100%;">
         </div>
         <button type="submit" style="height:42px;padding:0 20px;">주문 실행</button>
     </form>
@@ -801,7 +1031,7 @@ def _render_dashboard_html(is_local_: bool, keys_configured: bool) -> str:
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width,initial-scale=1.0">
-    <title>KR Stock AutoTrader</title>
+    <title>Upbit Crypto AutoTrader</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
     {_COMMON_STYLE}
     <style>{_DASHBOARD_CSS}</style>
@@ -893,36 +1123,15 @@ def _render_setup_html() -> str:
 
         <form id="keysForm" onsubmit="saveKeys(event)">
             <div class="setup-card">
-                <h2>🏦 한국투자증권 Open API</h2>
+                <h2>🪙 업비트 Open API</h2>
                 <div class="form-group">
-                    <label><span class="status-dot" id="dot_KIS_APP_KEY"></span> APP KEY</label>
-                    <input type="password" id="KIS_APP_KEY" placeholder="발급받은 앱 키 입력" autocomplete="off">
-                    <div class="hint">한국투자증권 API 포털 → 앱 등록 → 앱 키</div>
+                    <label><span class="status-dot" id="dot_UPBIT_ACCESS_KEY"></span> Access Key</label>
+                    <input type="password" id="UPBIT_ACCESS_KEY" placeholder="업비트 Access Key 입력" autocomplete="off">
+                    <div class="hint">upbit.com → 마이페이지 → Open API 관리</div>
                 </div>
                 <div class="form-group">
-                    <label><span class="status-dot" id="dot_KIS_APP_SECRET"></span> APP SECRET</label>
-                    <input type="password" id="KIS_APP_SECRET" placeholder="발급받은 앱 시크릿 입력" autocomplete="off">
-                </div>
-                <div class="form-group">
-                    <label><span class="status-dot" id="dot_KIS_ACCOUNT_NO"></span> 계좌번호</label>
-                    <input type="password" id="KIS_ACCOUNT_NO" placeholder="숫자만 입력 (예: 5012345601)" autocomplete="off">
-                    <div class="hint">종합계좌번호 8자리 + 상품코드 2자리</div>
-                </div>
-                <div style="display:flex; gap:12px;">
-                    <div class="form-group" style="flex:1;">
-                        <label>상품코드</label>
-                        <select id="KIS_ACCOUNT_PROD_CODE">
-                            <option value="01">01 (위탁)</option>
-                            <option value="02">02</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="flex:1;">
-                        <label>투자 모드</label>
-                        <select id="KIS_IS_PAPER">
-                            <option value="true" selected>모의투자 (안전)</option>
-                            <option value="false">실전투자</option>
-                        </select>
-                    </div>
+                    <label><span class="status-dot" id="dot_UPBIT_SECRET_KEY"></span> Secret Key</label>
+                    <input type="password" id="UPBIT_SECRET_KEY" placeholder="업비트 Secret Key 입력" autocomplete="off">
                 </div>
             </div>
 
@@ -985,8 +1194,8 @@ def _render_setup_html() -> str:
         }}
         async function saveKeys(e) {{
             e.preventDefault();
-            const fields = ['KIS_APP_KEY','KIS_APP_SECRET','KIS_ACCOUNT_NO','KIS_ACCOUNT_PROD_CODE',
-                'KIS_IS_PAPER','GEMINI_API_KEY','CLAUDE_API_KEY','GMAIL_ADDRESS','GMAIL_APP_PASSWORD'];
+            const fields = ['UPBIT_ACCESS_KEY','UPBIT_SECRET_KEY',
+                'GEMINI_API_KEY','CLAUDE_API_KEY','GMAIL_ADDRESS','GMAIL_APP_PASSWORD'];
             const body = {{}};
             fields.forEach(f => {{ body[f] = document.getElementById(f).value; }});
             try {{
