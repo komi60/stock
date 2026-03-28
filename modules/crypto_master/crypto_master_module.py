@@ -1,0 +1,579 @@
+"""크립토 마스터 모듈.
+
+크립토 뉴스 + 기술적 분석 + Fear&Greed Index를 통합하여
+업비트 KRW 마켓 전체에서 매수/매도 코인을 자동 선정 및 주문 실행.
+24/7 운영 (5분 간격).
+페이퍼 트레이딩 지원.
+"""
+
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from typing import Any
+
+from loguru import logger
+
+from broker.upbit_api import UpbitClient
+from core.base_module import BaseModule
+from core.database import get_db
+from modules.crypto_news.crypto_news_module import CryptoNewsModule
+from modules.crypto_trading.crypto_trading_module import (
+    CryptoTradingModule,
+    SIGNAL_BUY,
+    SIGNAL_STRONG_BUY,
+    SIGNAL_SELL,
+    SIGNAL_STRONG_SELL,
+    SIGNAL_HOLD,
+)
+
+
+class CryptoMasterModule(BaseModule):
+    """암호화폐 자동매매 마스터 모듈.
+
+    5분마다 실행:
+    1. KRW 전체 마켓 스캔
+    2. 기술적 분석 (crypto_trading)
+    3. 뉴스 감성 점수 (crypto_news)
+    4. Fear & Greed Index
+    5. 통합 점수 계산 → 매수 후보 선정
+    6. 보유 포지션 매도 체크 (스탑로스/익절)
+    7. 주문 실행 (페이퍼 or 실거래)
+    """
+
+    def __init__(
+        self,
+        config: dict[str, Any],
+        upbit: UpbitClient,
+        crypto_news: CryptoNewsModule,
+        crypto_trading: CryptoTradingModule,
+    ):
+        super().__init__("crypto_master", config)
+        self._upbit = upbit
+        self._news = crypto_news
+        self._trading = crypto_trading
+
+        # 설정
+        risk = config.get("risk", {})
+        self._max_positions = risk.get("max_positions", 5)
+        self._max_single_pct = risk.get("max_single_position_pct", 20.0)
+        self._daily_loss_limit_pct = risk.get("daily_loss_limit_pct", 5.0)
+        self._stop_loss_pct = risk.get("stop_loss_pct", 8.0)
+        self._take_profit_pct = risk.get("take_profit_pct", 15.0)
+        self._min_confidence = risk.get("min_confidence", 0.65)
+        self._min_order_krw = risk.get("min_order_krw", 5000)
+        self._paper_trading = config.get("use_paper_trading", True)
+
+        # 신호 통합 가중치
+        signal_weights = config.get("modules", {}).get("crypto_trading", {}).get(
+            "signal_weights", {}
+        )
+        self._w_technical = signal_weights.get("technical", 0.5)
+        self._w_news = signal_weights.get("news", 0.3)
+        self._w_fear_greed = signal_weights.get("fear_greed", 0.2)
+
+        # 상태
+        self._positions: dict[str, dict] = {}  # {market: position_dict}
+        self._paper_balance: float = 1_000_000.0  # 페이퍼 트레이딩 초기 잔고 (100만원)
+        self._daily_start_value: float = 0.0
+        self._markets_cache: list[str] = []
+
+    async def initialize(self) -> None:
+        """모듈 초기화: 잔고 로드, 마켓 목록 캐시."""
+        try:
+            markets_data = await self._upbit.get_markets(krw_only=True)
+            self._markets_cache = [m["market"] for m in markets_data]
+            logger.info(f"KRW 마켓 목록 로드: {len(self._markets_cache)}개")
+        except Exception as e:
+            logger.error(f"마켓 목록 로드 실패: {e}")
+
+        if not self._paper_trading:
+            await self._sync_real_positions()
+
+        logger.info(
+            f"크립토 마스터 초기화 완료 (모드: {'페이퍼' if self._paper_trading else '실거래'})"
+        )
+
+    async def execute(self) -> dict:
+        """5분마다 실행되는 메인 루틴."""
+        if not self._markets_cache:
+            try:
+                markets_data = await self._upbit.get_markets(krw_only=True)
+                self._markets_cache = [m["market"] for m in markets_data]
+            except Exception as e:
+                logger.error(f"마켓 목록 재로드 실패: {e}")
+                return {}
+
+        result = {
+            "checked_markets": 0,
+            "buy_orders": 0,
+            "sell_orders": 0,
+            "positions": len(self._positions),
+        }
+
+        # 1. 일일 손실 한도 체크
+        if await self._is_daily_loss_exceeded():
+            logger.warning("크립토 일일 손실 한도 초과. 신규 매수 중단.")
+            await self._check_stop_losses()
+            return result
+
+        # 2. 현재 포지션 가격 업데이트
+        await self._update_position_prices()
+
+        # 3. 보유 코인 매도 체크 (스탑로스 / 익절)
+        sell_count = await self._check_sell_conditions()
+        result["sell_orders"] = sell_count
+
+        # 4. 매수 후보 스캔 (최대 포지션 미만일 때만)
+        if len(self._positions) < self._max_positions:
+            buy_count, checked = await self._scan_buy_opportunities()
+            result["buy_orders"] = buy_count
+            result["checked_markets"] = checked
+
+        result["positions"] = len(self._positions)
+        logger.info(
+            f"크립토 마스터 실행 완료: 스캔={result['checked_markets']}, "
+            f"매수={result['buy_orders']}, 매도={result['sell_orders']}, "
+            f"보유={result['positions']}"
+        )
+        return result
+
+    async def shutdown(self) -> None:
+        logger.info("크립토 마스터 모듈 종료")
+
+    # ─── 매수 스캔 ────────────────────────────────────────
+
+    async def _scan_buy_opportunities(self) -> tuple[int, int]:
+        """KRW 전체 마켓 스캔 → 통합 점수 계산 → 매수 실행.
+
+        Returns:
+            (buy_count, checked_count)
+        """
+        # 이미 보유 중인 마켓 제외
+        held_markets = set(self._positions.keys())
+
+        # 배치로 현재가 조회 (100개씩)
+        candidate_markets = [m for m in self._markets_cache if m not in held_markets]
+
+        buy_count = 0
+        checked = 0
+
+        # 상위 거래량 코인만 분석 (전체를 다 분석하면 너무 오래 걸림)
+        top_markets = await self._get_top_volume_markets(candidate_markets, top_n=50)
+
+        # 각 코인 기술적 분석
+        scored_markets = []
+        for market in top_markets:
+            try:
+                tech_signal = await self._trading.analyze(market)
+                signal = tech_signal.get("signal", SIGNAL_HOLD)
+
+                # 매수 신호인 경우만 스코어 계산
+                if signal not in (SIGNAL_BUY, SIGNAL_STRONG_BUY):
+                    checked += 1
+                    continue
+
+                # 통합 점수 계산
+                total_score = self._calc_total_score(market, tech_signal)
+
+                if total_score >= self._min_confidence:
+                    scored_markets.append((market, total_score, tech_signal))
+
+                checked += 1
+            except Exception as e:
+                logger.debug(f"[{market}] 분석 오류: {e}")
+
+        # 점수 내림차순 정렬 → 상위 코인부터 매수
+        scored_markets.sort(key=lambda x: x[1], reverse=True)
+
+        for market, score, tech_signal in scored_markets:
+            if len(self._positions) >= self._max_positions:
+                break
+            try:
+                success = await self._execute_buy(market, score, tech_signal)
+                if success:
+                    buy_count += 1
+            except Exception as e:
+                logger.error(f"[{market}] 매수 실행 오류: {e}")
+
+        return buy_count, checked
+
+    def _calc_total_score(self, market: str, tech_signal: dict) -> float:
+        """기술적 분석 + 뉴스 감성 + Fear&Greed 통합 점수 (0~1).
+
+        가중치:
+        - 기술적 분석: 50%
+        - 뉴스 감성: 30%
+        - Fear & Greed: 20%
+        """
+        # 기술적 점수: BUY 신호일 때 confidence 사용
+        tech_confidence = tech_signal.get("confidence", 0.0)
+        tech_score = tech_confidence * self._w_technical
+
+        # 뉴스 점수 (0~1)
+        news_score = self._news.get_coin_news_score(market) * self._w_news
+
+        # Fear & Greed 점수 (0~100 → 0~1, 50 이상이면 긍정)
+        fg_index = self._news.get_fear_greed_index()
+        fg_score = (fg_index / 100.0) * self._w_fear_greed
+
+        total = tech_score + news_score + fg_score
+        return round(min(total, 1.0), 3)
+
+    async def _get_top_volume_markets(
+        self, markets: list[str], top_n: int = 50
+    ) -> list[str]:
+        """거래량 상위 N개 마켓 반환."""
+        try:
+            # 100개씩 나눠서 현재가 조회
+            all_tickers = []
+            for i in range(0, len(markets), 100):
+                batch = markets[i : i + 100]
+                tickers = await self._upbit.get_ticker(batch)
+                all_tickers.extend(tickers)
+
+            # 거래대금 기준 정렬
+            all_tickers.sort(
+                key=lambda x: float(x.get("acc_trade_price_24h", 0)), reverse=True
+            )
+            return [t["market"] for t in all_tickers[:top_n]]
+        except Exception as e:
+            logger.error(f"거래량 상위 마켓 조회 실패: {e}")
+            return markets[:top_n]
+
+    # ─── 매수 실행 ────────────────────────────────────────
+
+    async def _execute_buy(
+        self, market: str, total_score: float, tech_signal: dict
+    ) -> bool:
+        """매수 주문 실행.
+
+        Returns:
+            True if 주문 성공
+        """
+        current_price = tech_signal.get("current_price", 0)
+        if current_price <= 0:
+            return False
+
+        # 가용 KRW 조회
+        if self._paper_trading:
+            available_krw = self._paper_balance
+        else:
+            try:
+                available_krw = await self._upbit.get_krw_balance()
+            except Exception as e:
+                logger.error(f"KRW 잔고 조회 실패: {e}")
+                return False
+
+        # 포지션 사이즈 계산
+        total_portfolio = available_krw + sum(
+            pos.get("current_value", 0) for pos in self._positions.values()
+        )
+        order_krw = min(
+            available_krw,
+            total_portfolio * (self._max_single_pct / 100),
+        )
+
+        if order_krw < self._min_order_krw:
+            logger.info(f"[{market}] 가용 KRW 부족 ({order_krw:.0f}원)")
+            return False
+
+        # 수량 계산
+        volume = order_krw / current_price
+
+        stop_loss = tech_signal.get("stop_loss_price", current_price * (1 - self._stop_loss_pct / 100))
+        take_profit = tech_signal.get("take_profit_price", current_price * (1 + self._take_profit_pct / 100))
+
+        logger.info(
+            f"[크립토 매수] {market} | 점수: {total_score:.3f} | "
+            f"가격: {current_price:,.0f} KRW | 금액: {order_krw:,.0f} KRW | "
+            f"스탑: {stop_loss:,.0f} | 익절: {take_profit:,.0f}"
+        )
+
+        order_result = await self._upbit.place_order(
+            market=market,
+            side="bid",
+            price=order_krw,
+            ord_type="price",  # 시장가 매수
+        )
+
+        if order_result:
+            # 포지션 등록
+            self._positions[market] = {
+                "market": market,
+                "volume": volume,
+                "avg_price": current_price,
+                "current_price": current_price,
+                "current_value": order_krw,
+                "pnl_pct": 0.0,
+                "stop_loss_price": stop_loss,
+                "take_profit_price": take_profit,
+                "total_score": total_score,
+                "opened_at": datetime.now().isoformat(),
+                "is_paper": self._paper_trading,
+            }
+
+            if self._paper_trading:
+                self._paper_balance -= order_krw
+
+            # DB 저장
+            await self._save_order(market, "bid", volume, current_price, order_result)
+            await self._save_position(market)
+            return True
+
+        return False
+
+    # ─── 매도 체크 ────────────────────────────────────────
+
+    async def _check_sell_conditions(self) -> int:
+        """보유 코인 매도 조건 체크 (스탑로스 / 익절 / 기술적 매도 신호)."""
+        sell_count = 0
+        markets_to_sell = []
+
+        for market, pos in self._positions.items():
+            current_price = pos.get("current_price", 0)
+            avg_price = pos.get("avg_price", 0)
+            if avg_price <= 0:
+                continue
+
+            pnl_pct = (current_price / avg_price - 1) * 100
+            pos["pnl_pct"] = pnl_pct
+
+            stop_loss = pos.get("stop_loss_price", avg_price * (1 - self._stop_loss_pct / 100))
+            take_profit = pos.get("take_profit_price", avg_price * (1 + self._take_profit_pct / 100))
+
+            should_sell = False
+            reason = ""
+
+            # 스탑로스
+            if current_price <= stop_loss:
+                should_sell = True
+                reason = f"스탑로스 ({pnl_pct:.1f}%)"
+
+            # 익절
+            elif current_price >= take_profit:
+                should_sell = True
+                reason = f"익절 목표 달성 ({pnl_pct:.1f}%)"
+
+            # 기술적 강력 매도 신호
+            elif pnl_pct > -2:  # 큰 손실 상태가 아닐 때만 신호 체크
+                try:
+                    tech = self._trading.get_signal(market)
+                    if tech and tech.get("signal") == SIGNAL_STRONG_SELL:
+                        should_sell = True
+                        reason = f"기술적 강력 매도 신호 ({pnl_pct:.1f}%)"
+                except Exception:
+                    pass
+
+            if should_sell:
+                markets_to_sell.append((market, reason))
+
+        for market, reason in markets_to_sell:
+            try:
+                success = await self._execute_sell(market, reason)
+                if success:
+                    sell_count += 1
+            except Exception as e:
+                logger.error(f"[{market}] 매도 실행 오류: {e}")
+
+        return sell_count
+
+    async def _check_stop_losses(self) -> None:
+        """일일 손실 한도 초과 시 긴급 스탑로스 점검."""
+        for market, pos in list(self._positions.items()):
+            pnl_pct = pos.get("pnl_pct", 0)
+            if pnl_pct <= -self._stop_loss_pct:
+                await self._execute_sell(market, f"긴급 손절 (일손실 한도 초과, {pnl_pct:.1f}%)")
+
+    async def _execute_sell(self, market: str, reason: str) -> bool:
+        """매도 주문 실행."""
+        pos = self._positions.get(market)
+        if not pos:
+            return False
+
+        volume = pos.get("volume", 0)
+        current_price = pos.get("current_price", 0)
+        pnl_pct = pos.get("pnl_pct", 0)
+
+        logger.info(
+            f"[크립토 매도] {market} | 사유: {reason} | "
+            f"수익률: {pnl_pct:.1f}% | 가격: {current_price:,.0f} KRW"
+        )
+
+        order_result = await self._upbit.place_order(
+            market=market,
+            side="ask",
+            volume=volume,
+            ord_type="market",  # 시장가 매도
+        )
+
+        if order_result:
+            # 포지션 제거
+            sell_value = volume * current_price
+            if self._paper_trading:
+                self._paper_balance += sell_value
+
+            await self._save_order(market, "ask", volume, current_price, order_result)
+
+            # DB 포지션 업데이트
+            try:
+                db = await get_db()
+                await db.execute(
+                    "UPDATE crypto_positions SET updated_at = ? WHERE market = ?",
+                    (datetime.now().isoformat(), market),
+                )
+                await db.commit()
+                await db.close()
+            except Exception as e:
+                logger.error(f"포지션 DB 업데이트 오류: {e}")
+
+            del self._positions[market]
+            return True
+
+        return False
+
+    # ─── 포지션 관리 ──────────────────────────────────────
+
+    async def _update_position_prices(self) -> None:
+        """보유 포지션 현재가 업데이트."""
+        if not self._positions:
+            return
+        try:
+            markets = list(self._positions.keys())
+            tickers = await self._upbit.get_ticker(markets)
+            price_map = {t["market"]: float(t.get("trade_price", 0)) for t in tickers}
+
+            for market, pos in self._positions.items():
+                price = price_map.get(market, pos.get("current_price", 0))
+                pos["current_price"] = price
+                pos["current_value"] = pos.get("volume", 0) * price
+                avg = pos.get("avg_price", 0)
+                pos["pnl_pct"] = (price / avg - 1) * 100 if avg > 0 else 0
+        except Exception as e:
+            logger.error(f"포지션 가격 업데이트 오류: {e}")
+
+    async def _sync_real_positions(self) -> None:
+        """실거래 모드: 업비트 실계정 잔고와 포지션 동기화."""
+        try:
+            balances = await self._upbit.get_balance()
+            for item in balances:
+                currency = item.get("currency", "")
+                if currency == "KRW":
+                    continue
+                balance = float(item.get("balance", 0))
+                avg_price = float(item.get("avg_buy_price", 0))
+                if balance <= 0:
+                    continue
+                market = f"KRW-{currency}"
+                self._positions[market] = {
+                    "market": market,
+                    "volume": balance,
+                    "avg_price": avg_price,
+                    "current_price": avg_price,
+                    "current_value": balance * avg_price,
+                    "pnl_pct": 0.0,
+                    "stop_loss_price": avg_price * (1 - self._stop_loss_pct / 100),
+                    "take_profit_price": avg_price * (1 + self._take_profit_pct / 100),
+                    "opened_at": datetime.now().isoformat(),
+                    "is_paper": False,
+                }
+            logger.info(f"실계정 포지션 동기화: {len(self._positions)}개")
+        except Exception as e:
+            logger.error(f"실계정 포지션 동기화 실패: {e}")
+
+    async def _is_daily_loss_exceeded(self) -> bool:
+        """일일 손실 한도 초과 여부."""
+        if not self._positions:
+            return False
+
+        total_value = sum(pos.get("current_value", 0) for pos in self._positions.values())
+        total_cost = sum(
+            pos.get("avg_price", 0) * pos.get("volume", 0)
+            for pos in self._positions.values()
+        )
+        if total_cost == 0:
+            return False
+
+        loss_pct = (total_value / total_cost - 1) * 100
+        return loss_pct <= -self._daily_loss_limit_pct
+
+    # ─── 포트폴리오 요약 ──────────────────────────────────
+
+    def get_portfolio_summary(self) -> dict:
+        """현재 크립토 포트폴리오 요약."""
+        total_value = sum(pos.get("current_value", 0) for pos in self._positions.values())
+        total_cost = sum(
+            pos.get("avg_price", 0) * pos.get("volume", 0)
+            for pos in self._positions.values()
+        )
+        total_pnl_pct = (total_value / total_cost - 1) * 100 if total_cost > 0 else 0
+
+        return {
+            "positions": list(self._positions.values()),
+            "total_positions": len(self._positions),
+            "total_value": round(total_value, 0),
+            "total_cost": round(total_cost, 0),
+            "total_pnl_pct": round(total_pnl_pct, 2),
+            "paper_krw_balance": self._paper_balance if self._paper_trading else None,
+            "fear_greed_index": self._news.get_fear_greed_index(),
+            "is_paper": self._paper_trading,
+        }
+
+    # ─── DB 저장 ───────────────────────────────────────────
+
+    async def _save_order(
+        self,
+        market: str,
+        side: str,
+        volume: float,
+        price: float,
+        order_result: dict,
+    ) -> None:
+        try:
+            db = await get_db()
+            await db.execute(
+                """INSERT INTO crypto_orders
+                   (market, side, volume, price, ord_type, status, uuid, is_paper)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    market,
+                    side,
+                    volume,
+                    price,
+                    order_result.get("ord_type", "market"),
+                    order_result.get("state", "done"),
+                    order_result.get("uuid", ""),
+                    1 if self._paper_trading else 0,
+                ),
+            )
+            await db.commit()
+            await db.close()
+        except Exception as e:
+            logger.error(f"주문 DB 저장 오류: {e}")
+
+    async def _save_position(self, market: str) -> None:
+        pos = self._positions.get(market)
+        if not pos:
+            return
+        try:
+            db = await get_db()
+            await db.execute(
+                """INSERT OR REPLACE INTO crypto_positions
+                   (market, volume, avg_price, current_price, pnl_pct,
+                    stop_loss_price, take_profit_price, is_paper)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    market,
+                    pos.get("volume", 0),
+                    pos.get("avg_price", 0),
+                    pos.get("current_price", 0),
+                    pos.get("pnl_pct", 0),
+                    pos.get("stop_loss_price", 0),
+                    pos.get("take_profit_price", 0),
+                    1 if self._paper_trading else 0,
+                ),
+            )
+            await db.commit()
+            await db.close()
+        except Exception as e:
+            logger.error(f"포지션 DB 저장 오류: {e}")

@@ -35,6 +35,12 @@ from modules.master.master_module import MasterModule
 from modules.watcher.watcher_module import WatcherModule
 from modules.dashboard.dashboard import create_dashboard
 
+# 암호화폐 자동매매 모듈
+from broker.upbit_api import UpbitClient
+from modules.crypto_news.crypto_news_module import CryptoNewsModule
+from modules.crypto_trading.crypto_trading_module import CryptoTradingModule
+from modules.crypto_master.crypto_master_module import CryptoMasterModule
+
 
 class AutoTraderApp:
     """메인 애플리케이션. 모든 모듈의 생명주기를 관리."""
@@ -46,6 +52,9 @@ class AutoTraderApp:
         self._kis: KISClient | None = None
         self._gemini: GeminiClient | None = None
         self._master: MasterModule | None = None
+        # 암호화폐 모듈
+        self._upbit: UpbitClient | None = None
+        self._crypto_master: CryptoMasterModule | None = None
         self._shutdown_event = asyncio.Event()
 
     async def start(self) -> None:
@@ -100,6 +109,9 @@ class AutoTraderApp:
         if self._kis:
             await self._kis.close()
 
+        if self._upbit:
+            await self._upbit.close()
+
         logger.info("시스템 종료 완료")
 
     # ─── 초기화 ────────────────────────────────────────────
@@ -122,6 +134,24 @@ class AutoTraderApp:
             logger.info("Gemini AI 초기화 완료")
         except Exception as e:
             logger.error(f"Gemini AI 초기화 실패: {e}")
+
+        # 업비트 API (암호화폐)
+        import os
+        crypto_cfg = self._config.settings.get("crypto", {})
+        if crypto_cfg.get("enabled", False):
+            upbit_access_key = os.getenv("UPBIT_ACCESS_KEY", "")
+            upbit_secret_key = os.getenv("UPBIT_SECRET_KEY", "")
+            is_paper = crypto_cfg.get("use_paper_trading", True)
+            self._upbit = UpbitClient(
+                access_key=upbit_access_key,
+                secret_key=upbit_secret_key,
+                is_paper=is_paper,
+            )
+            try:
+                await self._upbit.connect()
+                logger.info("업비트 API 연결 완료")
+            except Exception as e:
+                logger.error(f"업비트 API 연결 실패: {e}")
 
     def _init_modules(self, settings: dict) -> None:
         """모듈 생성 및 레지스트리 등록."""
@@ -164,6 +194,39 @@ class AutoTraderApp:
                 gemini=self._gemini,
             )
             self._registry.register(watcher)
+
+        # ── 암호화폐 자동매매 모듈 ──
+        crypto_cfg = settings.get("crypto", {})
+        if crypto_cfg.get("enabled", False) and self._upbit is not None:
+            crypto_modules_cfg = crypto_cfg.get("modules", {})
+
+            # 크립토 뉴스 모듈
+            crypto_news = CryptoNewsModule(
+                config=crypto_modules_cfg.get("crypto_news", {}),
+                gemini=self._gemini,
+            )
+            self._registry.register(crypto_news)
+
+            # 크립토 트레이딩 모듈
+            crypto_trading_cfg = crypto_modules_cfg.get("crypto_trading", {})
+            # stop_loss_pct, take_profit_pct는 risk 설정에서 가져옴
+            crypto_trading_cfg["stop_loss_pct"] = crypto_cfg.get("risk", {}).get("stop_loss_pct", 8.0)
+            crypto_trading_cfg["take_profit_pct"] = crypto_cfg.get("risk", {}).get("take_profit_pct", 15.0)
+            crypto_trading = CryptoTradingModule(
+                config=crypto_trading_cfg,
+                upbit=self._upbit,
+            )
+            self._registry.register(crypto_trading)
+
+            # 크립토 마스터 모듈
+            self._crypto_master = CryptoMasterModule(
+                config=crypto_cfg,
+                upbit=self._upbit,
+                crypto_news=crypto_news,
+                crypto_trading=crypto_trading,
+            )
+            self._registry.register(self._crypto_master)
+            logger.info("암호화폐 자동매매 모듈 등록 완료")
 
         logger.info(f"등록된 모듈: {len(self._registry)}개")
 
@@ -247,6 +310,45 @@ class AutoTraderApp:
             policy_monitor, minutes=15,
             job_id="policy_monitor",
         )
+
+        # ── 암호화폐 자동매매 잡 (24/7) ──
+
+        # 30분마다 - 크립토 뉴스 수집 및 Fear&Greed Index 갱신
+        async def crypto_news_collect():
+            crypto_news = self._registry.get("crypto_news")
+            if crypto_news:
+                await crypto_news.safe_execute()
+
+        crypto_news_interval = (
+            settings.get("crypto", {})
+            .get("modules", {})
+            .get("crypto_news", {})
+            .get("interval_minutes", 30)
+        )
+        if self._registry.get("crypto_news"):
+            self._scheduler.add_interval_job(
+                crypto_news_collect,
+                minutes=crypto_news_interval,
+                job_id="crypto_news_collect",
+            )
+
+        # 5분마다 - 크립토 마스터 (분석 + 매매 실행)
+        async def crypto_trading_loop():
+            if self._crypto_master:
+                await self._crypto_master.safe_execute()
+
+        crypto_master_interval = (
+            settings.get("crypto", {})
+            .get("modules", {})
+            .get("crypto_master", {})
+            .get("execution_interval_minutes", 5)
+        )
+        if self._crypto_master:
+            self._scheduler.add_interval_job(
+                crypto_trading_loop,
+                minutes=crypto_master_interval,
+                job_id="crypto_trading_loop",
+            )
 
     # ─── 대시보드 ──────────────────────────────────────────
 

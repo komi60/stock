@@ -66,3 +66,47 @@ modules:
     host: "0.0.0.0"
     port: 8080
     local_write_enabled: true
+
+# 업비트 암호화폐 자동매매 설정
+crypto:
+  enabled: true
+  watchlist: "ALL_KRW"        # 업비트 KRW 전체 마켓 (ALL_KRW 또는 특정 코인 목록)
+  use_paper_trading: true     # 페이퍼 트레이딩 (실거래 전환 시 false)
+
+  risk:
+    max_positions: 5              # 동시 보유 코인 수
+    max_single_position_pct: 20.0 # 단일 포지션 최대 비율 (%)
+    daily_loss_limit_pct: 5.0     # 일일 손실 한도 (%)
+    stop_loss_pct: 8.0            # 개별 코인 스탑로스 (%)
+    take_profit_pct: 15.0         # 익절 목표 (%)
+    min_confidence: 0.65          # 최소 신뢰도 임계값 (0~1)
+    min_order_krw: 5000           # 최소 주문 금액 (KRW)
+
+  modules:
+    crypto_news:
+      enabled: true
+      interval_minutes: 30
+      max_articles_per_source: 30
+      sources:
+        - "coindesk"
+        - "cointelegraph"
+        - "coindesk_kr"
+        - "decrypt"
+
+    crypto_trading:
+      enabled: true
+      candle_count: 200
+      indicators:
+        - "RSI"
+        - "MACD"
+        - "BBANDS"
+        - "EMA"
+        - "ATR"
+      signal_weights:
+        technical: 0.5
+        news: 0.3
+        fear_greed: 0.2
+
+    crypto_master:
+      enabled: true
+      execution_interval_minutes: 5

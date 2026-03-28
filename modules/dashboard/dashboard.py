@@ -291,6 +291,136 @@ def create_dashboard(
         except Exception as e:
             raise HTTPException(500, str(e))
 
+    # ─── 암호화폐 API 엔드포인트 ──────────────────────────
+
+    @app.get("/api/crypto/portfolio")
+    async def crypto_portfolio():
+        """크립토 포트폴리오 요약."""
+        crypto_master = registry.get("crypto_master")
+        if crypto_master and hasattr(crypto_master, "get_portfolio_summary"):
+            return crypto_master.get_portfolio_summary()
+        return {
+            "positions": [],
+            "total_positions": 0,
+            "total_value": 0,
+            "total_pnl_pct": 0,
+            "is_paper": True,
+            "message": "크립토 모듈이 비활성화 상태입니다.",
+        }
+
+    @app.get("/api/crypto/signals")
+    async def crypto_signals():
+        """최근 크립토 매매 신호."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT market, signal, confidence, rsi, macd, bb_position,
+                          fear_greed_index, total_score, created_at
+                   FROM crypto_signals
+                   ORDER BY created_at DESC LIMIT 50"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "signals": [
+                    {
+                        "market": r[0], "signal": r[1], "confidence": r[2],
+                        "rsi": r[3], "macd": r[4], "bb_position": r[5],
+                        "fear_greed_index": r[6], "total_score": r[7],
+                        "created_at": r[8],
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "signals": []}
+
+    @app.get("/api/crypto/orders")
+    async def crypto_orders():
+        """최근 크립토 주문 내역."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT market, side, volume, price, ord_type, status,
+                          uuid, is_paper, created_at
+                   FROM crypto_orders
+                   ORDER BY created_at DESC LIMIT 50"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "orders": [
+                    {
+                        "market": r[0], "side": r[1], "volume": r[2],
+                        "price": r[3], "ord_type": r[4], "status": r[5],
+                        "uuid": r[6], "is_paper": bool(r[7]), "created_at": r[8],
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "orders": []}
+
+    @app.get("/api/crypto/news")
+    async def crypto_news_feed():
+        """최근 크립토 뉴스."""
+        try:
+            db = await get_db()
+            cursor = await db.execute(
+                """SELECT title, source, sentiment, impact_score,
+                          related_coins, ai_summary, created_at
+                   FROM crypto_news
+                   ORDER BY created_at DESC LIMIT 50"""
+            )
+            rows = await cursor.fetchall()
+            await db.close()
+            return {
+                "news": [
+                    {
+                        "title": r[0], "source": r[1], "sentiment": r[2],
+                        "impact_score": r[3], "related_coins": r[4],
+                        "summary": r[5], "time": r[6],
+                    }
+                    for r in rows
+                ]
+            }
+        except Exception as e:
+            return {"error": str(e), "news": []}
+
+    @app.get("/api/crypto/fear-greed")
+    async def crypto_fear_greed():
+        """현재 Fear & Greed Index."""
+        crypto_news_module = registry.get("crypto_news")
+        if crypto_news_module and hasattr(crypto_news_module, "get_fear_greed_index"):
+            index = crypto_news_module.get_fear_greed_index()
+            label_map = {
+                (0, 25): "Extreme Fear",
+                (25, 45): "Fear",
+                (45, 55): "Neutral",
+                (55, 75): "Greed",
+                (75, 101): "Extreme Greed",
+            }
+            label = next(
+                (v for (lo, hi), v in label_map.items() if lo <= index < hi),
+                "Neutral"
+            )
+            return {"value": index, "label": label}
+        return {"value": 50, "label": "Neutral", "message": "크립토 뉴스 모듈 비활성"}
+
+    @app.post("/api/crypto/keys", dependencies=[Depends(require_local)])
+    async def save_upbit_keys(keys: dict):
+        """업비트 API 키 저장 (로컬 전용)."""
+        access_key = keys.get("UPBIT_ACCESS_KEY", "")
+        secret_key = keys.get("UPBIT_SECRET_KEY", "")
+        if access_key:
+            vault.set("UPBIT_ACCESS_KEY", access_key)
+        if secret_key:
+            vault.set("UPBIT_SECRET_KEY", secret_key)
+        vault.save()
+        vault.export_to_env()
+        logger.info("업비트 API 키 저장 완료")
+        return {"status": "saved"}
+
     return app
 
 

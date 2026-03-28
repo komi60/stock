@@ -37,6 +37,9 @@ aiosqlite>=0.20
 # Email
 aiosmtplib>=3.0
 
+# Crypto
+PyJWT>=2.8
+
 # Utilities
 asyncio-throttle>=1.0
 orjson>=3.9
