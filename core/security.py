@@ -88,14 +88,13 @@ class SecureVault:
 
     def has_keys(self) -> bool:
         """필수 키가 모두 설정되었는지 확인."""
-        required = ["KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO", "GEMINI_API_KEY"]
+        required = ["UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY", "GEMINI_API_KEY"]
         return all(bool(self._data.get(k)) for k in required)
 
     def get_status(self) -> dict[str, str]:
         """각 키의 설정 상태 (마스킹)."""
         all_keys = [
-            "KIS_APP_KEY", "KIS_APP_SECRET", "KIS_ACCOUNT_NO",
-            "KIS_ACCOUNT_PROD_CODE", "KIS_IS_PAPER",
+            "UPBIT_ACCESS_KEY", "UPBIT_SECRET_KEY",
             "GEMINI_API_KEY", "CLAUDE_API_KEY",
             "GMAIL_ADDRESS", "GMAIL_APP_PASSWORD",
         ]

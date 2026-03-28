@@ -1,67 +1,13 @@
 # 시스템 전역 설정
 system:
-  name: "KR Stock AutoTrader"
+  name: "Upbit Crypto AutoTrader"
   timezone: "Asia/Seoul"
   log_level: "INFO"
   data_dir: "./data"
   log_dir: "./logs"
 
-# 시장 시간
-market:
-  open_time: "09:00"
-  close_time: "15:30"
-  pre_market_prep_time: "08:00"
-  post_market_analysis_time: "16:00"
-
-# 모듈별 설정
+# 대시보드 설정
 modules:
-  news:
-    enabled: true
-    report_time: "08:30"
-    max_articles_per_source: 50
-    sources:
-      - "naver_finance"
-      - "hankyung"
-      - "reuters_kr"
-
-  sentiment:
-    enabled: true
-    update_interval_minutes: 10
-    min_trust_score: 0.3
-    channels:
-      - "naver_stock_forum"
-      - "theqoo"
-      - "dcinside_stock"
-
-  policy:
-    enabled: true
-    update_interval_minutes: 15
-    sources:
-      - "government_press"
-      - "bok"  # 한국은행
-      - "fss"  # 금융감독원
-
-  trading:
-    enabled: true
-    indicators:
-      - "SMA"
-      - "EMA"
-      - "RSI"
-      - "MACD"
-      - "BBANDS"
-    tick_interval_seconds: 5
-
-  master:
-    max_positions: 10
-    max_single_position_pct: 15.0
-    daily_loss_limit_pct: 3.0
-    use_paper_trading: true
-
-  watcher:
-    enabled: true
-    report_time: "16:30"
-    email_report: true
-
   dashboard:
     host: "0.0.0.0"
     port: 8080

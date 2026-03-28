@@ -46,11 +46,8 @@ class ManualOrderRequest(BaseModel):
 
 
 class ApiKeysRequest(BaseModel):
-    KIS_APP_KEY: str = ""
-    KIS_APP_SECRET: str = ""
-    KIS_ACCOUNT_NO: str = ""
-    KIS_ACCOUNT_PROD_CODE: str = "01"
-    KIS_IS_PAPER: str = "true"
+    UPBIT_ACCESS_KEY: str = ""
+    UPBIT_SECRET_KEY: str = ""
     GEMINI_API_KEY: str = ""
     CLAUDE_API_KEY: str = ""
     GMAIL_ADDRESS: str = ""
@@ -1023,36 +1020,15 @@ def _render_setup_html() -> str:
 
         <form id="keysForm" onsubmit="saveKeys(event)">
             <div class="setup-card">
-                <h2>🏦 한국투자증권 Open API</h2>
+                <h2>🪙 업비트 Open API</h2>
                 <div class="form-group">
-                    <label><span class="status-dot" id="dot_KIS_APP_KEY"></span> APP KEY</label>
-                    <input type="password" id="KIS_APP_KEY" placeholder="발급받은 앱 키 입력" autocomplete="off">
-                    <div class="hint">한국투자증권 API 포털 → 앱 등록 → 앱 키</div>
+                    <label><span class="status-dot" id="dot_UPBIT_ACCESS_KEY"></span> Access Key</label>
+                    <input type="password" id="UPBIT_ACCESS_KEY" placeholder="업비트 Access Key 입력" autocomplete="off">
+                    <div class="hint">upbit.com → 마이페이지 → Open API 관리</div>
                 </div>
                 <div class="form-group">
-                    <label><span class="status-dot" id="dot_KIS_APP_SECRET"></span> APP SECRET</label>
-                    <input type="password" id="KIS_APP_SECRET" placeholder="발급받은 앱 시크릿 입력" autocomplete="off">
-                </div>
-                <div class="form-group">
-                    <label><span class="status-dot" id="dot_KIS_ACCOUNT_NO"></span> 계좌번호</label>
-                    <input type="password" id="KIS_ACCOUNT_NO" placeholder="숫자만 입력 (예: 5012345601)" autocomplete="off">
-                    <div class="hint">종합계좌번호 8자리 + 상품코드 2자리</div>
-                </div>
-                <div style="display:flex; gap:12px;">
-                    <div class="form-group" style="flex:1;">
-                        <label>상품코드</label>
-                        <select id="KIS_ACCOUNT_PROD_CODE">
-                            <option value="01">01 (위탁)</option>
-                            <option value="02">02</option>
-                        </select>
-                    </div>
-                    <div class="form-group" style="flex:1;">
-                        <label>투자 모드</label>
-                        <select id="KIS_IS_PAPER">
-                            <option value="true" selected>모의투자 (안전)</option>
-                            <option value="false">실전투자</option>
-                        </select>
-                    </div>
+                    <label><span class="status-dot" id="dot_UPBIT_SECRET_KEY"></span> Secret Key</label>
+                    <input type="password" id="UPBIT_SECRET_KEY" placeholder="업비트 Secret Key 입력" autocomplete="off">
                 </div>
             </div>
 
@@ -1115,8 +1091,8 @@ def _render_setup_html() -> str:
         }}
         async function saveKeys(e) {{
             e.preventDefault();
-            const fields = ['KIS_APP_KEY','KIS_APP_SECRET','KIS_ACCOUNT_NO','KIS_ACCOUNT_PROD_CODE',
-                'KIS_IS_PAPER','GEMINI_API_KEY','CLAUDE_API_KEY','GMAIL_ADDRESS','GMAIL_APP_PASSWORD'];
+            const fields = ['UPBIT_ACCESS_KEY','UPBIT_SECRET_KEY',
+                'GEMINI_API_KEY','CLAUDE_API_KEY','GMAIL_ADDRESS','GMAIL_APP_PASSWORD'];
             const body = {{}};
             fields.forEach(f => {{ body[f] = document.getElementById(f).value; }});
             try {{
