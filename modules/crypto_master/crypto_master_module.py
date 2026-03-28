@@ -439,8 +439,18 @@ class CryptoMasterModule(BaseModule):
         if not self._positions:
             return
         try:
-            markets = list(self._positions.keys())
-            tickers = await self._upbit.get_ticker(markets)
+            # 상장폐지/미지원 마켓 필터링
+            valid_markets = [
+                m for m in self._positions
+                if not self._markets_cache or m in self._markets_cache
+            ]
+            invalid = set(self._positions) - set(valid_markets)
+            if invalid:
+                logger.warning(f"가격 조회 불가 마켓 건너뜀: {invalid}")
+            if not valid_markets:
+                return
+
+            tickers = await self._upbit.get_ticker(valid_markets)
             price_map = {t["market"]: float(t.get("trade_price", 0)) for t in tickers}
 
             for market, pos in self._positions.items():
@@ -465,6 +475,10 @@ class CryptoMasterModule(BaseModule):
                 if balance <= 0:
                     continue
                 market = f"KRW-{currency}"
+                # 유효한 KRW 마켓인지 확인 (상장폐지/미지원 코인 제외)
+                if self._markets_cache and market not in self._markets_cache:
+                    logger.warning(f"유효하지 않은 마켓 건너뜀: {market}")
+                    continue
                 self._positions[market] = {
                     "market": market,
                     "volume": balance,
